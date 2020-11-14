@@ -104,7 +104,7 @@ def getPressure(fname, game):
             game._teams[posession._posessor._team]._posessions.append(posession)
             game._entities[posession._posessor._id]._posession_lst.append(posession)
             # print(s)
-            posession.plotPosession()
+            # posession.plotPosession()
 
 
     return game
@@ -229,10 +229,6 @@ else:
             # player.getShifts(rink_obj)
             entities[player._id] = player
 
-    # print("Saving")
-    # for i in list(entities.keys()):
-    #     entities[i].savePlayer()
-
 # heartbeat = getHeartbeat(fname)
 game = getEventSummary(fname, entities, game)
 
@@ -246,20 +242,8 @@ game = getPressure(fname, game)
 print_to_terminal.rankPosessionData(game)
 
 
-counters = []
-for i in entities.keys():
-    try:
-        max_count = np.amax(np.array(entities[i]._counter))
-        min_count = np.amax(np.array(entities[i]._counter))
-    except:
-        pass
-    counters.append(max_count)
-    counters.append(min_count)
+# for i in entities.keys():
     # print(entities[i]._last_name, ": ", len(entities[i]._counter))
     # if entities[i]._last_name == "Johnson":
     #     entities[i].plotMovement()
     #     exit()
-print(np.amax(np.array(counters)))
-print(np.amin(np.array(counters)))
-print(np.amax(heartbeat))
-print(np.amin(heartbeat))

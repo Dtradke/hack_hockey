@@ -1,0 +1,20 @@
+You will need to install:
+
+numpy==1.17.4
+pandas==1.1.3
+matplotlib==3.1.2
+
+
+How to run:
+
+1. Have data on your home machine in the parent directory of this repository
+	-ex: ../2019030415/
+
+2. Navigate to: /hack_hockey/processing/
+
+3. python3 read_data.py [load] [path to game data]
+	NOTE: the 'load' is to load player objects which have been saved previously. This is optional, but cannot be used until player objects are made and saved in the first run
+	-currently need to comment/uncomment passes or posessions... will change this
+
+Dave:
+	-My python code is in 'processing/'
