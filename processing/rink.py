@@ -25,11 +25,43 @@ class Game(object):
         self._code = info["OfficialCode"]
         self._teams = teams
         self._posessions = {}
+        self._passes = {}
 
 
     def getRinkPlot(self):
         fig, ax = getRink()
         return fig, ax
+
+
+    def runGameSynchonus(self, time):
+        ''' This plays the game synchonusly '''
+        fig, ax = getRink()
+
+        for e in self._entities.keys():
+            try:
+                key = np.argmin(np.abs(np.array(list(self._entities[e]._hd_UTC_update.keys())) - time))
+                key = list(self._entities[e]._hd_UTC_update.keys())[key]
+                if self._entities[e]._hd_UTC_update[key]["_onice"]:
+                    plt.scatter(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"], s=self._entities[e]._size, c=self._entities[e]._color, label=self._entities[e]._number+self._entities[e]._last_name)
+                    if self._entities[e]._id != '1':
+                        ax.annotate(self._entities[e]._number,(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"]))
+            except:
+                pass
+
+        if np.amin(np.array(list(self._passes.keys())) - time) < 0.2:
+            key = np.argmin(np.array(list(self._passes.keys())) - time)
+            pass_event = self._passes[list(self._passes.keys())[key]]
+            del self._passes[list(self._passes.keys())[key]]
+            print("PASS: ", pass_event)
+            plt.scatter(pass_event._origin["X"], pass_event._origin["Y"], s=40, c='r', label='Origin')
+            plt.scatter(pass_event._destination["X"], pass_event._destination["Y"], s=40, c='c', label='Destination')
+            plt.plot([pass_event._origin["X"], pass_event._destination["X"]], [pass_event._origin["Y"], pass_event._destination["Y"]], c='r')
+
+
+        plt.legend()
+        plt.show()
+
+
 
     def graphGame(self):
         fig, ax = getRink()
@@ -84,7 +116,10 @@ class Game(object):
             # if self._entities[e]._team != my_team:
             try: #Try catches players who dont get updated, like backup goalie
                 # if mode == 'posession':
-                time_idx = np.where((np.abs(np.array(self._entities[e]._update_time) - cur_time) < 0.5))[0][0]
+                # time_idx = np.where((np.abs(np.array(self._entities[e]._update_time) - cur_time) < 0.5))[0][0]
+
+                time_idx = np.argmin((np.abs(np.array(self._entities[e]._update_time) - cur_time)))
+
                 if self._entities[e]._onice[time_idx] and self._entities[e]._id != '1':
                     opponents_on_ice.append({'entity_id':e, 'time_idx':time_idx})
                 # else:
@@ -93,6 +128,7 @@ class Game(object):
                 #         opponents_on_ice.append({'entity_id':e, 'time_idx':time_idx})
             except:
                 pass
+
 
         # exit()
         return opponents_on_ice
@@ -106,7 +142,8 @@ class Game(object):
             # if (self._entities[e]._pos != "Referee" or self._entities[e]._pos != "Linesman"):
                 # if self._entities[e]._team == my_team:
             try:
-                time_idx = np.where((np.abs(np.array(self._entities[e]._update_time) - cur_time) < 0.5))[0][0]
+                # time_idx = np.where((np.abs(np.array(self._entities[e]._update_time) - cur_time) < 0.5))[0][0]
+                time_idx = np.argmin((np.abs(np.array(self._entities[e]._update_time) - cur_time)))
                 if self._entities[e]._onice[time_idx] and self._entities[e]._id != '1':
                     teammates_on_ice.append({'entity_id':e, 'time_idx':time_idx})
             except:

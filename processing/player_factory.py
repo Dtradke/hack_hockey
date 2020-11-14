@@ -59,6 +59,7 @@ class Player(object):
         self._turnovers = 0
         self._steals = 0
         self._posession_time = 0
+        self._pressure_to_pass = [] # array with the pressures on a player when they give up the puck
 
 
         # for HD resolution tracking

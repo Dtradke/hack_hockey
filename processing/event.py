@@ -11,6 +11,10 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 
+
+def euclideanDistance(x1, y1, x2, y2):
+    return math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+
 class Posession(object):
     def __init__(self, game, posession, next_posession):
         self._game = game
@@ -25,12 +29,30 @@ class Posession(object):
         self._stolen = self.wasTurnover(posession)
         self._turnover = self.wasTurnover(next_posession)
         self._posession_UTC_keys = self.getTimeKeys()
+        self._d_front = 15
+        self._d_back = 5
+        self.getPressure()
 
+        self._total_pressure = 0
+        for p in self._posession_pressures.keys():
+            self._total_pressure+=np.sum(np.array(self._posession_pressures[p]))
+
+        try:
+            self._pressure_at_posession_loss = np.sum(np.array(self._posession_pressures[max(list(self._posession_pressures.keys()))]))
+        except:
+            self._pressure_at_posession_loss = 0.0
+
+        # print(self._total_pressure)
+        # print(self._pressure_at_posession_loss)
+        # exit()
+
+        # ----- update player
+        self._posessor._pressure_to_pass.append(self._pressure_at_posession_loss)
         self._posessor._posession_time+=self._clocktime_seconds
         if self._stolen: self._posessor._steals+=1
         if self._turnover: self._posessor._turnovers+=1
 
-    def plotPosession(self):
+    def plotPosession(self, border=None):
 
         for count, time in enumerate(self._posession_UTC_keys):
             fig, ax = self._game.getRinkPlot()
@@ -58,6 +80,9 @@ class Posession(object):
             plt.legend()
             plt.title("Posession: "+ self._posessor._last_name+" "+str(self._clocktime_start["ClockMinutes"])+":"+str(self._clocktime_start["ClockSeconds"])+" Duration: "+str(self._clocktime_seconds), fontsize=20)
 
+            if border is not None:
+                plt.scatter(border[0], border[1], s=10, c='m',label="Pressure Boundary")
+
             # theta = np.linspace(0, 2*np.pi, 100)
             # r = np.sqrt(30)
             # x1 = r*np.cos(theta)
@@ -66,6 +91,89 @@ class Posession(object):
 
             plt.show()
             # exit()
+
+    def plotPosessionTimestep(self, time, border=None):
+
+        fig, ax = self._game.getRinkPlot()
+
+        opponents = self._game.getOpponentsOnIce(self._posessor._team, time)
+        teammates = self._game.getTeammatesOnIce(self._posessor._team, time)
+        for i in opponents:
+            opp = self._game._entities[i["entity_id"]]
+            plt.scatter(opp._hd_UTC_update[opp._update_time[i["time_idx"]]]["X"], opp._hd_UTC_update[opp._update_time[i["time_idx"]]]["Y"], c=opp._color, label=opp._number+opp._last_name)
+            ax.annotate(opp._number,(opp._hd_UTC_update[opp._update_time[i["time_idx"]]]["X"], opp._hd_UTC_update[opp._update_time[i["time_idx"]]]["Y"]))
+
+        for i in teammates:
+            mate = self._game._entities[i["entity_id"]]
+            if mate._id != self._posessor._id:
+                plt.scatter(mate._hd_UTC_update[mate._update_time[i["time_idx"]]]["X"], mate._hd_UTC_update[mate._update_time[i["time_idx"]]]["Y"], c=mate._color, label=mate._number+mate._last_name)
+                ax.annotate(mate._number,(mate._hd_UTC_update[mate._update_time[i["time_idx"]]]["X"], mate._hd_UTC_update[mate._update_time[i["time_idx"]]]["Y"]))
+
+
+        plt.scatter(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], s=120, c='y', label="Posessor")
+        plt.scatter(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], c=self._posessor._color, label=self._posessor._last_name)
+
+        plt.arrow(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], (self._posessor._hd_UTC_update[time]["X"]+self._posessor._hd_UTC_update[time]["velX"]),
+                    (self._posessor._hd_UTC_update[time]["Y"]+self._posessor._hd_UTC_update[time]["velY"]), length_includes_head=True,head_width=1, head_length=3)
+        plt.scatter(self._game._entities['1']._hd_UTC_update[time]["X"], self._game._entities['1']._hd_UTC_update[time]["Y"], s=10, c=self._game._entities['1']._color, label="Puck")
+        plt.legend()
+        plt.title("Posession: "+ self._posessor._last_name+" "+str(self._clocktime_start["ClockMinutes"])+":"+str(self._clocktime_start["ClockSeconds"])+" Duration: "+str(self._clocktime_seconds), fontsize=20)
+
+        if border is not None:
+            plt.scatter(border[0], border[1], s=10, c='m',label="Pressure Boundary")
+
+        plt.show()
+
+    def getRadians(self, x1, y1, x2, y2):
+        ''' Calculates the degrees of angle between two points... posessor should always be first '''
+        return math.atan2(y2-y1, x2-x1)
+
+    def getL(self, rad):
+        z = (1 - np.cos(rad)) / 2
+        L = self._d_back + ((self._d_front - self._d_back) * (z**3 + (z * 0.3)) / 1.3) #calculate distance limit in that direction
+        return L
+
+    def getPressure(self):
+        ''' Calculates pressure similar to paper: A visual analysis of pressure in football'''
+
+        q = 1
+        self._posession_pressures = {}
+        for count, time in enumerate(self._posession_UTC_keys):
+            attacking_net = self._game.getAttackingNet(self._posessor._team, self._period)
+            rad_to_net = self.getRadians(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], attacking_net["X"], attacking_net["Y"])
+            # print(rad_to_net)
+            opponents = self._game.getOpponentsOnIce(self._posessor._team, time)
+            teammates = self._game.getTeammatesOnIce(self._posessor._team, time)
+
+            border_x, border_y = [], []
+            for i in np.linspace(0,(2*np.pi),200):
+                L = self.getL(i-rad_to_net)
+                border_x.append(self._posessor._hd_UTC_update[time]["X"]-(np.cos(i)*L))
+                border_y.append(self._posessor._hd_UTC_update[time]["Y"]-(np.sin(i)*L))
+
+
+            timestep_pressure = []
+            for i in opponents:
+                opp = self._game._entities[i["entity_id"]]
+                opp_x = opp._hd_UTC_update[round(opp._update_time[i["time_idx"]],1)]["X"]
+                opp_y = opp._hd_UTC_update[round(opp._update_time[i["time_idx"]],1)]["Y"]
+
+                d = euclideanDistance(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], opp_x, opp_y)
+
+                if d <= self._d_front:
+                    rad_to_opp = self.getRadians(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], opp_x, opp_y)
+                    rad_diff = np.pi - np.absolute(rad_to_net - rad_to_opp)
+                    L = self.getL(rad_diff)
+                    pressure = 100 + (((1 - d) / L) ** q) * 100
+
+                    if d < L:
+                        timestep_pressure.append(pressure)
+
+            self._posession_pressures[time] = timestep_pressure
+
+            # print("Pressers: ", len(timestep_pressure), " Pressure: ", np.sum(np.array(timestep_pressure)))
+            # self.plotPosessionTimestep(time, border=(border_x,border_y))
+
 
     def getTimeKeys(self):
         key_list = np.array(list(self._posessor._hd_UTC_update.keys()))
@@ -92,20 +200,20 @@ class Posession(object):
             return False
 
     def __repr__(self):
-        return "Posession(Team: {}, Player: {}, Period: {}, Clock: {}, Duration: {}, UTC_diff: {}, Turnover?: {})".format(self._posessor._team, self._posessor._last_name, self._period, str(self._clocktime_start["ClockMinutes"])+":"+str(self._clocktime_start["ClockSeconds"]), self._clocktime_seconds, self._posession_UTC_keys.shape[0], self._turnover)
+        return "Posession(Team: {}, Player: {}, Period: {}, Clock: {}, Duration: {}, UTC_diff: {}, Turnover?: {}, PassPressure: {})".format(self._posessor._team, self._posessor._last_name, self._period, str(self._clocktime_start["ClockMinutes"])+":"+str(self._clocktime_start["ClockSeconds"]),
+                                            self._clocktime_seconds, self._posession_UTC_keys.shape[0], self._turnover, self._pressure_at_posession_loss)
 
 
 class Pass(object):
     def __init__(self, game, time, descriptor, info):
         self._time = time # when the pass was caught
         self.getPassData(game, descriptor, info)
-        self._distance = self.euclideanDistance(self._origin["X"], self._origin["Y"], self._destination["X"], self._destination["Y"])
+        self._distance = euclideanDistance(self._origin["X"], self._origin["Y"], self._destination["X"], self._destination["Y"])
         self.getInformation(info)
         self.beat = 0
         self.beatOpponents(info, game)
 
-    def euclideanDistance(self, x1, y1, x2, y2):
-        return math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+
 
     def getPassData(self, game, descriptor, info_participants):
         desc_arr = descriptor.split(" ")
@@ -176,8 +284,10 @@ class Pass(object):
         fig, ax = game.getRinkPlot()
 
         for i in teammates:
-            plt.scatter(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]], c=game._entities[i["entity_id"]]._color, label=game._entities[i["entity_id"]]._number+game._entities[i["entity_id"]]._last_name)
-            ax.annotate(game._entities[i["entity_id"]]._number,(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]]))
+            mate = game._entities[i["entity_id"]]
+            key = round(mate._update_time[i["time_idx"]], 1)
+            plt.scatter(mate._hd_UTC_update[key]["X"], mate._hd_UTC_update[key]["Y"], c=game._entities[i["entity_id"]]._color, label=game._entities[i["entity_id"]]._number+game._entities[i["entity_id"]]._last_name)
+            ax.annotate(game._entities[i["entity_id"]]._number,(mate._hd_UTC_update[key]["X"], mate._hd_UTC_update[key]["Y"]))
 
         plt.scatter(self._origin["X"], self._origin["Y"], s=40, c='r', label='Origin')
         plt.scatter(self._destination["X"], self._destination["Y"], s=40, c='c', label='Destination')
@@ -186,10 +296,28 @@ class Pass(object):
         plt.scatter(game._entities[beat["entity_id"]]._locX[beat["time_idx"]], game._entities[beat["entity_id"]]._locY[beat["time_idx"]], s = 100, c='y', label="Beaten")
 
         for i in opponents:
-            plt.scatter(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]], c=game._entities[i["entity_id"]]._color, label=game._entities[i["entity_id"]]._number+game._entities[i["entity_id"]]._last_name)
-            ax.annotate(game._entities[i["entity_id"]]._number,(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]]))
+            opp = game._entities[i["entity_id"]]
+            key = round(opp._update_time[i["time_idx"]], 1)
+            plt.scatter(opp._hd_UTC_update[key]["X"], opp._hd_UTC_update[key]["Y"], c=game._entities[i["entity_id"]]._color, label=game._entities[i["entity_id"]]._number+game._entities[i["entity_id"]]._last_name)
+            ax.annotate(game._entities[i["entity_id"]]._number,(opp._hd_UTC_update[key]["X"], opp._hd_UTC_update[key]["Y"]))
         plt.legend()
         plt.show()
+
+        # for i in teammates:
+        #     plt.scatter(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]], c=game._entities[i["entity_id"]]._color, label=game._entities[i["entity_id"]]._number+game._entities[i["entity_id"]]._last_name)
+        #     ax.annotate(game._entities[i["entity_id"]]._number,(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]]))
+        #
+        # plt.scatter(self._origin["X"], self._origin["Y"], s=40, c='r', label='Origin')
+        # plt.scatter(self._destination["X"], self._destination["Y"], s=40, c='c', label='Destination')
+        # plt.plot([self._origin["X"], self._destination["X"]], [self._origin["Y"], self._destination["Y"]], c='r')
+        #
+        # plt.scatter(game._entities[beat["entity_id"]]._locX[beat["time_idx"]], game._entities[beat["entity_id"]]._locY[beat["time_idx"]], s = 100, c='y', label="Beaten")
+        #
+        # for i in opponents:
+        #     plt.scatter(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]], c=game._entities[i["entity_id"]]._color, label=game._entities[i["entity_id"]]._number+game._entities[i["entity_id"]]._last_name)
+        #     ax.annotate(game._entities[i["entity_id"]]._number,(game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]]))
+        # plt.legend()
+        # plt.show()
         # exit()
 
     def beatOpponents(self, info, game):
@@ -198,14 +326,14 @@ class Pass(object):
         '''
 
         attacking_net = game.getAttackingNet(self._passer._team, self._period)
-        pass_origin_len = self.euclideanDistance(attacking_net["X"], attacking_net["Y"], self._origin["X"], self._origin["Y"])
-        pass_dest_len = self.euclideanDistance(attacking_net["X"], attacking_net["Y"], self._destination["X"], self._destination["Y"])
+        pass_origin_len = euclideanDistance(attacking_net["X"], attacking_net["Y"], self._origin["X"], self._origin["Y"])
+        pass_dest_len = euclideanDistance(attacking_net["X"], attacking_net["Y"], self._destination["X"], self._destination["Y"])
 
 
         opponents = game.getOpponentsOnIce(self._passer._team, self._time)
         teammates = game.getTeammatesOnIce(self._passer._team, self._time)
         for i in opponents:
-            opp_net_diff = self.euclideanDistance(attacking_net["X"], attacking_net["Y"], game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]])
+            opp_net_diff = euclideanDistance(attacking_net["X"], attacking_net["Y"], game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]])
             # self.plotPass(game, opponents, teammates, i)
             if pass_origin_len > opp_net_diff and pass_dest_len < opp_net_diff and len(opponents) == 6 and len(teammates) == 6:
                 game._entities[i["entity_id"]]._beaten.append(self._passer._id)

@@ -12,6 +12,7 @@ import print_to_terminal
 
 fname = sys.argv[-1]
 
+
 # NOTES: HOME DEFENDS THE RIGHT GOAL IN FIRST PERIOD
 
 def makePlayers(fname, game):
@@ -105,7 +106,7 @@ def getPressure(fname, game):
             game._entities[posession._posessor._id]._posession_lst.append(posession)
             # print(s)
             # posession.plotPosession()
-
+            print(posession)
 
     return game
 
@@ -122,7 +123,7 @@ def getPasses(fname, game):
         event_type = t["Marker"]["MarkerData"][0]["MinorType"]
         if event_type == "EventPass":
             pass_event = event.Pass(game, time, t["Marker"]["MarkerData"][0]['Descriptor_'], t["Marker"]["MarkerData"])
-            passes.append(pass_event)
+            game._passes[round(time,1)] = pass_event
 
     # print(len(passes))
     # for e in game._entities.keys():
@@ -161,6 +162,15 @@ def getEventSummary(fname, entities, game):
 
     # game.graphGame()
     return game
+
+def playGame(game):
+    print("Playing the game synchonusly")
+
+    times = list(game._entities['1']._hd_UTC_update.keys())
+    for count, t in enumerate(times):
+        if count > 75:
+            game.runGameSynchonus(t)
+
 
 def assignMovement(entities):
     ''' This function traverses the EntityTracking.json file
@@ -233,13 +243,17 @@ else:
 game = getEventSummary(fname, entities, game)
 
 
+
 # PASSES
-# game = getPasses(fname, game)
+game = getPasses(fname, game)
 # print_to_terminal.rankPassingData(game)
 
 # POSESSION/PRESSURE
-game = getPressure(fname, game)
-print_to_terminal.rankPosessionData(game)
+# game = getPressure(fname, game)
+# print_to_terminal.rankPosessionData(game)
+
+playGame(game)
+exit()
 
 
 # for i in entities.keys():
