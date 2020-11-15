@@ -125,6 +125,7 @@ def getPasses(fname, game):
             pass_event = event.Pass(game, time, t["Marker"]["MarkerData"][0]['Descriptor_'], t["Marker"]["MarkerData"])
             game._passes[round(time,1)] = pass_event
 
+
     # print(len(passes))
     # for e in game._entities.keys():
     #     print(game._entities[e])
@@ -214,6 +215,10 @@ def assignMovement(entities):
         #     exit()
     return entities
 
+
+
+# NOTE: START HERE
+
 rink_obj = rink.Rink()
 
 teams = makeTeams(fname)
@@ -241,8 +246,6 @@ else:
 
 # heartbeat = getHeartbeat(fname)
 game = getEventSummary(fname, entities, game)
-
-
 
 # PASSES
 game = getPasses(fname, game)
