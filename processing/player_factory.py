@@ -122,24 +122,16 @@ class Player(object):
         self._zones = []
         self._shifts = []
         shift = {"start": -1, "end": -1}
-        for i, val in enumerate(self._onice):
-            # cur_zone = rink.getZone(self._locX[i], self._locY[i])
-            # self._zones.append(cur_zone)
-            # if 'Rink' in cur_zone and shift["start"] == -1: #start shift
-            #     shift["start"] = val
-            # elif 'Rink' not in cur_zone and shift["start"] != -1 and (val - shift["start"]) > 3: #end shift
-            #     shift["end"] = val
-            #     self._shifts.append(shift)
-            #     shift = {"start": -1, "end": -1}
-            # else:
-            #     shift = {"start": -1, "end": -1}
-            if val and not self._onice[i-1]:
-                shift["start"] = i
-            if not val and self._onice[i-1] and shift["start"] != -1:
-                shift["end"] = i-1
-            if shift["start"] != -1 and shift["end"] != -1:
-                self._shifts.append(shift)
-                shift = {"start": -1, "end": -1}
+        for i, val in enumerate(self._hd_UTC_update.keys()):
+            if i > 0:
+                previous_key = list(self._hd_UTC_update.keys())[np.argmin(np.absolute(np.array(list(self._hd_UTC_update.keys())) - val)) - 1]
+                if self._hd_UTC_update[val]["_onice"] and not self._hd_UTC_update[previous_key]["_onice"]:
+                    shift["start"] = val
+                if not self._hd_UTC_update[val]["_onice"] and self._hd_UTC_update[previous_key]["_onice"] and shift["start"] != -1:
+                    shift["end"] = val-1
+                if shift["start"] != -1 and shift["end"] != -1:
+                    self._shifts.append(shift)
+                    shift = {"start": -1, "end": -1}
 
 
     def savePlayer(self):

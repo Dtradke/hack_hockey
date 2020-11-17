@@ -10,6 +10,11 @@ from matplotlib.patches import Rectangle
 
 fname = sys.argv[-1]
 
+def loadGame(fname):
+    with open(fname, "rb") as f:
+        game = pickle.load(f)
+    return game
+
 def close_event():
     plt.close()
 
@@ -26,6 +31,10 @@ class Game(object):
         self._teams = teams
         self._posessions = {}
         self._passes = {}
+        self._shots = {}
+        self._hits = {}
+        self._faceoffs = {}
+        self._posessions = {}
 
 
     def getRinkPlot(self):
@@ -33,9 +42,53 @@ class Game(object):
         return fig, ax
 
 
-    def runGameSynchonus(self, time):
+    def runGameSynchonus(self, time, cur_posession, time_key):
         ''' This plays the game synchonusly '''
+        # if np.amin(np.absolute(np.array(list(self._passes.keys())) - time) < 0.2:
+            # if np.amin(np.absolute(np.array(list(self._hits.keys())) - time)) <= 0.1:
+
+        time_data = {"entities": [],
+                    "faceoffs":[],
+                    "hit": [],
+                    "pass": [],
+                    "posession": []}
+
         fig, ax = getRink()
+
+        if cur_posession is not None:
+            key = np.argmin(np.abs(np.array(list(cur_posession._posessor._hd_UTC_update.keys())) - time))
+            key = list(cur_posession._posessor._hd_UTC_update.keys())[key]
+            cur_posession.getPressure(key)
+
+            cur_posessor = np.array([cur_posession._posessor._hd_UTC_update[key]["X"], cur_posession._posessor._hd_UTC_update[key]["Y"]])
+
+            cur_posession.getPasslanes(key)
+            for b in cur_posession._betas:
+                plt.plot([cur_posessor[0], b[0][0]], [cur_posessor[1], b[0][1]])
+                annotations = np.mean(np.array([cur_posessor, np.array(b[0])]), axis=0)
+                ax.annotate(round(b[1],3),(annotations[0], annotations[1]))
+
+
+            time_data["posession"] = cur_posession
+            plt.scatter(cur_posessor[0], cur_posessor[1], s=160, c='y', label='Posession')
+            # ax.annotate(round(cur_posession._pressure,1),(cur_posession._posessor._hd_UTC_update[key]["X"]+5, cur_posession._posessor._hd_UTC_update[key]["Y"]+5))
+
+
+        # ---- faceoffs
+        if np.amin(np.absolute(np.array(list(self._faceoffs.keys())) - time)) == 0:
+            key = np.argmin(np.absolute(np.array(list(self._faceoffs.keys())) - time))
+            faceoff = self._faceoffs[list(self._faceoffs.keys())[key]]
+            plt.scatter(faceoff._loc["X"], faceoff._loc["Y"], s=160, c='c', label='Faceoff')
+            plt.title(faceoff)
+            time_data["faceoffs"].append(faceoff)
+
+        # ---- hits
+        if np.amin(np.absolute(np.array(list(self._hits.keys())) - time)) == 0:
+            key = np.argmin(np.absolute(np.array(list(self._hits.keys())) - time))
+            hit_event = self._hits[list(self._hits.keys())[key]]
+            plt.scatter(hit_event._loc["X"], hit_event._loc["Y"], s=160, c='y', label='Hit')
+            plt.title(hit_event)
+            time_data["hit"].append(hit_event)
 
         for e in self._entities.keys():
             try:
@@ -45,21 +98,38 @@ class Game(object):
                     plt.scatter(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"], s=self._entities[e]._size, c=self._entities[e]._color, label=self._entities[e]._number+self._entities[e]._last_name)
                     if self._entities[e]._id != '1':
                         ax.annotate(self._entities[e]._number,(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"]))
+                    time_data["entities"].append(self._entities[e])
             except:
                 pass
 
-        if np.amin(np.array(list(self._passes.keys())) - time) < 0.2:
-            key = np.argmin(np.array(list(self._passes.keys())) - time)
+        # ---- passes
+        if np.amin(np.absolute(np.array(list(self._passes.keys())) - time)) == 0:
+            key = np.argmin(np.absolute(np.array(list(self._passes.keys())) - time))
             pass_event = self._passes[list(self._passes.keys())[key]]
-            del self._passes[list(self._passes.keys())[key]]
-            print("PASS: ", pass_event)
+            # print("PASS: ", pass_event)
             plt.scatter(pass_event._origin["X"], pass_event._origin["Y"], s=40, c='r', label='Origin')
             plt.scatter(pass_event._destination["X"], pass_event._destination["Y"], s=40, c='c', label='Destination')
             plt.plot([pass_event._origin["X"], pass_event._destination["X"]], [pass_event._origin["Y"], pass_event._destination["Y"]], c='r')
+            plt.title(pass_event)
+            time_data["pass"].append(pass_event)
 
+        # ---- shots
+        # if np.amin(np.array(list(self._shots.keys())) - time) < 0.2:
+        #     key = np.argmin(np.array(list(self._shots.keys())) - time)
+        #     shot_event = self._shots[list(self._shots.keys())[key]]
+        #     del self._shots[list(self._shots.keys())[key]]
+        #     plt.scatter(shot_event._loc["X"], shot_event._loc["Y"], s=40, c='r', label='Origin')
+        #     plt.plot([shot_event._loc["X"], shot_event._attacking_net["X"]], [shot_event._loc["Y"], shot_event._attacking_net["Y"]], c='r')
+        #     plt.title(shot_event)
+
+
+
+        # else:
+        #     plt.title(key)
 
         plt.legend()
         plt.show()
+        return time_data
 
 
 
@@ -153,7 +223,7 @@ class Game(object):
 
 
     def __repr__(self):
-        return "Game(Id: {}, Home: {}, Away: {}, StartUTC: {}, EndUTC: {})".format(self._gameId, self._home_team, self._visitor_team, self._UTC_start, self._UTC_end)
+        return "Game(Id: {}, Home: {}, Away: {}, StartUTC: {}, EndUTC: {})".format(self._gameId, self._home_team_num, self._visitor_team_num, self._UTC_start, self._UTC_end)
 
 class Rink(object):
     def __init__(self):

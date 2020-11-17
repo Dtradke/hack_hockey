@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import os
+import math
 
 import player_factory
 import rink
@@ -12,8 +13,17 @@ import print_to_terminal
 
 fname = sys.argv[-1]
 
+# STATS TO TRACK:
+# - shots
+# - hits [check]
+# - significant passes [check]
+# - posessions/pressure [check]
+# - shift length [check - use _onice]
+# - run the game completely synchonusly, push data real-time
+
 
 # NOTES: HOME DEFENDS THE RIGHT GOAL IN FIRST PERIOD
+
 
 def makePlayers(fname, game):
     '''Creates the entities in the selected game
@@ -78,7 +88,7 @@ def getGame(fname, teams):
             game._UTC_end = update["Event"]["ActualEndUTC"]
     return game
 
-def getPressure(fname, game):
+def getPosessions(fname, game):
     ''' This gets significant events in the game (ex: faceoffs, hits, goals, etc...)
     '''
 
@@ -104,9 +114,91 @@ def getPressure(fname, game):
             posession = event.Posession(game, possession_changes[i], possession_changes[i+1])
             game._teams[posession._posessor._team]._posessions.append(posession)
             game._entities[posession._posessor._id]._posession_lst.append(posession)
-            # print(s)
-            # posession.plotPosession()
-            print(posession)
+            game._posessions[round(posession._UTC_start,1)] = posession
+
+    return game
+
+def getHits(fname, game):
+
+    print("Loading Hits...")
+    with open(fname+'Marker.json') as f:
+        data = json.load(f)
+
+    counter = 0
+    for count, t in enumerate(data):
+        change_time = t["PacketSendUTC"]
+        event_type = t["Marker"]["MarkerData"][0]["MinorType"]
+        if event_type == "EventHit":
+            if len(t["Marker"]["MarkerData"][0]["Participants"]) == 2:
+                hit = event.Hit(game, t)
+                if round(hit._time, 1) not in (game._hits.keys()):
+                    game._hits[round(hit._time, 1)] = hit
+                    counter+=1
+                    # print(hit)
+                    # if counter == 10:
+                    #     print(game._hits.keys())
+                    #     exit()
+
+    return game
+
+
+
+
+def getShots(fname, game):
+    ''' This gets shot events in the game
+    '''
+    print("Loading Shots...")
+    with open(fname+'Marker.json') as f:
+        data = json.load(f)
+
+    last_total_seconds = 0
+    last_shooter = 0
+    count = 0
+    passes = []
+    for t in data:
+        time = t["PacketSendUTC"]
+        event_type = t["Marker"]["MarkerData"][0]["MinorType"]
+        print(event_type)
+        count +=1
+        if count == 100: exit()
+        if event_type == "EventShot":
+
+            participants = t["Marker"]["MarkerData"][0]["Participants"]
+            shooter_bool = False
+            for i in participants:
+                if i['Role'] == 'MapRoleShooter':
+                    shooter_bool = True
+
+            if len(participants) > 0 and shooter_bool:
+                shot_seconds = (t["Marker"]["MarkerData"][0]["ETime"]["ClockMinutes"]*60) + t["Marker"]["MarkerData"][0]["ETime"]["ClockSeconds"]
+                if np.abs(shot_seconds - last_total_seconds) > 5:
+                    shot_event = event.Shot(game, time, t["Marker"]["MarkerData"][0]['Descriptor_'], t["Marker"]["MarkerData"])
+                    # print(shot_event)
+                    last_total_seconds = (shot_event._clock_minutes*60) + shot_event._clock_seconds
+                    last_shooter = shot_event._shooter._id
+                    last_key = round(time,1)
+                    # print(shot_event)
+                    game._shots[round(time,1)] = shot_event
+                else:
+                    # print(t["Marker"]["MarkerData"])
+                    game._shots[last_key].updateShot(t["Marker"]["MarkerData"])
+
+    return game
+
+def getFaceOffs(fname, game):
+    ''' gets the faceoffs of the game '''
+    print("Loading Faceoffs...")
+
+    with open(fname+'Marker.json') as f:
+        data = json.load(f)
+
+    faceoffs = []
+    for t in data:
+        time = t["PacketSendUTC"]
+        event_type = t["Marker"]["MarkerData"][0]["MinorType"]
+        if event_type == "EventFaceoff":
+            faceoff = event.Faceoff(game, time, t)
+            game._faceoffs[round(faceoff._UTC_update,1)] = faceoff
 
     return game
 
@@ -123,8 +215,7 @@ def getPasses(fname, game):
         event_type = t["Marker"]["MarkerData"][0]["MinorType"]
         if event_type == "EventPass":
             pass_event = event.Pass(game, time, t["Marker"]["MarkerData"][0]['Descriptor_'], t["Marker"]["MarkerData"])
-            game._passes[round(time,1)] = pass_event
-
+            game._passes[round(pass_event._UTC_update,1)] = pass_event
 
     # print(len(passes))
     # for e in game._entities.keys():
@@ -167,10 +258,22 @@ def getEventSummary(fname, entities, game):
 def playGame(game):
     print("Playing the game synchonusly")
 
+    cur_posession = None
+    time_key = 0
     times = list(game._entities['1']._hd_UTC_update.keys())
     for count, t in enumerate(times):
         if count > 75:
-            game.runGameSynchonus(t)
+        # if np.amin(np.absolute(np.array(list(game._posessions.keys())) - t)) <= 0.1:
+            if np.amin(np.absolute(np.array(list(game._posessions.keys())) - t)) <= 0.1:
+                key_idx = np.argmin(np.absolute(np.array(list(game._posessions.keys())) - t))
+                time_key = list(game._posessions.keys())[key_idx]
+                cur_posession = game._posessions[time_key]
+            if cur_posession is not None:
+                if t > cur_posession._UTC_end:
+                    cur_posession = None
+
+            time_data = game.runGameSynchonus(t, cur_posession, time_key)
+            # print("count: ", count, " data: ", time_data)
 
 
 def assignMovement(entities):
@@ -219,41 +322,61 @@ def assignMovement(entities):
 
 # NOTE: START HERE
 
-rink_obj = rink.Rink()
 
-teams = makeTeams(fname)
-game = getGame(fname,teams)
-game._rink = rink_obj
-
-
-
-if "load" not in sys.argv:
-    entities = makePlayers(fname, game)
-    entities = assignMovement(entities)
-
-    print("Saving")
-    for i in list(entities.keys()):
-        entities[i].savePlayer()
+if "load_game" in sys.argv:
+    game_fnames = os.listdir(fname+"game/")
+    game = rink.loadGame(fname+"/game/"+game_fnames[0])
 else:
-    print("Loading Entities...")
-    entities = {}
-    entity_fnames = os.listdir(fname+"/players/")
-    for player_fname in entity_fnames:
-        if player_fname[-3:] == 'pkl':
-            player = player_factory.loadPlayer(fname+"/players/"+player_fname)
-            # player.getShifts(rink_obj)
-            entities[player._id] = player
 
-# heartbeat = getHeartbeat(fname)
-game = getEventSummary(fname, entities, game)
+    rink_obj = rink.Rink()
+    teams = makeTeams(fname)
+    game = getGame(fname,teams)
+    game._rink = rink_obj
 
-# PASSES
-game = getPasses(fname, game)
-# print_to_terminal.rankPassingData(game)
 
-# POSESSION/PRESSURE
-# game = getPressure(fname, game)
-# print_to_terminal.rankPosessionData(game)
+
+    if "load" not in sys.argv:
+        entities = makePlayers(fname, game)
+        entities = assignMovement(entities)
+
+        print("Saving")
+        for i in list(entities.keys()):
+            entities[i].savePlayer()
+    else:
+        print("Loading Entities...")
+        entities = {}
+        entity_fnames = os.listdir(fname+"/players/")
+        for player_fname in entity_fnames:
+            if player_fname[-3:] == 'pkl':
+                player = player_factory.loadPlayer(fname+"/players/"+player_fname)
+                # player.getShifts(rink_obj)
+                entities[player._id] = player
+
+    # heartbeat = getHeartbeat(fname)
+    game = getEventSummary(fname, entities, game)
+
+    # FACEOFFS
+    game = getFaceOffs(fname, game)
+
+    # SHOTS
+    # game = getShots(fname, game)
+
+    # HITS
+    game = getHits(fname, game)
+
+    # PASSES
+    game = getPasses(fname, game)
+    # print_to_terminal.rankPassingData(game)
+
+    # POSESSION/PRESSURE
+    game = getPosessions(fname, game)
+    # print_to_terminal.rankPosessionData(game)
+
+    game_fname = sys.argv[-1]+'game/'+str(game._gameId)+".pkl"
+    with open(game_fname, 'wb') as output:
+        pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
+    print("Game Saved")
+    # exit()
 
 playGame(game)
 exit()
