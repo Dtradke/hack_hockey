@@ -5,7 +5,7 @@ import pandas as pd
 def rankPosessionData(game):
     ''' This function presents the posession data for each player '''
 
-    col_lst = ['ID','First','Last','Posessions','Seconds','Avg_Time','Steals', 'Turnovers', 'Avg_PassPressure']
+    col_lst = ['ID','First','Last','Posessions','Avg_Time','Steals', 'Turnovers', 'Avg_PassPressure', 'Shots', 'Avg_ShotPressure']
     home_results = pd.DataFrame(columns=col_lst)
     away_results = pd.DataFrame(columns=col_lst)
 
@@ -19,40 +19,50 @@ def rankPosessionData(game):
         except:
             avg_poss = 0
         if game._entities[e]._team == game._home_team_num:
-            home_results.loc[count] = [game._entities[e]._id, game._entities[e]._first_name, game._entities[e]._last_name, len(game._entities[e]._posession_lst), game._entities[e]._posession_time, avg_poss,
-                                    game._entities[e]._steals, game._entities[e]._turnovers, round((np.sum(np.array(game._entities[e]._pressure_to_pass)) / len(game._entities[e]._pressure_to_pass)),1)]
+            home_results.loc[count] = [game._entities[e]._id, game._entities[e]._first_name, game._entities[e]._last_name, len(game._entities[e]._posession_lst), avg_poss,
+                                    game._entities[e]._steals, game._entities[e]._turnovers, round((np.sum(np.array(game._entities[e]._pressure_to_pass)) / len(game._entities[e]._pressure_to_pass)),1),
+                                    len(game._entities[e]._pressure_to_shoot), round((np.sum(np.array(game._entities[e]._pressure_to_shoot)) / len(game._entities[e]._pressure_to_shoot)),1)]
         elif game._entities[e]._team == game._visitor_team_num:
-            away_results.loc[count] = [game._entities[e]._id, game._entities[e]._first_name, game._entities[e]._last_name, len(game._entities[e]._posession_lst), game._entities[e]._posession_time, avg_poss,
-                                    game._entities[e]._steals, game._entities[e]._turnovers, round((np.sum(np.array(game._entities[e]._pressure_to_pass)) / len(game._entities[e]._pressure_to_pass)),1)]
+            away_results.loc[count] = [game._entities[e]._id, game._entities[e]._first_name, game._entities[e]._last_name, len(game._entities[e]._posession_lst), avg_poss,
+                                    game._entities[e]._steals, game._entities[e]._turnovers, round((np.sum(np.array(game._entities[e]._pressure_to_pass)) / len(game._entities[e]._pressure_to_pass)),1),
+                                    len(game._entities[e]._pressure_to_shoot), round((np.sum(np.array(game._entities[e]._pressure_to_shoot)) / len(game._entities[e]._pressure_to_shoot)),1)]
 
 
     print("HOME - ", game._teams[game._home_team_num])
     print(home_results.sort_values('Posessions', ascending=False))
     tot_team_posessions_home = np.sum(home_results["Posessions"])
-    tot_seconds_home = np.sum(home_results["Seconds"])
+    # tot_seconds_home = np.sum(home_results["Seconds"])
     tot_avg_time_home = np.sum(home_results["Avg_Time"]) / len(home_results["Avg_Time"])
     tot_turnovers_home = np.sum(home_results["Turnovers"])
     avg_pressurepass_home = np.sum(home_results["Avg_PassPressure"]) / len(home_results["Avg_PassPressure"])
-    print(game._teams[game._home_team_num]._full_name, " - Posessions: ", tot_team_posessions_home, " Seconds: ", tot_seconds_home,
-                    " Avg Duration: ", tot_avg_time_home, " Turnovers: ", tot_turnovers_home, " PassPressure: ", avg_pressurepass_home)
+    tot_shots_home = np.sum(home_results["Shots"])
+    avg_shot_pressure_home = np.sum(home_results["Avg_ShotPressure"]) / len(home_results["Avg_ShotPressure"])
+    print(game._teams[game._home_team_num]._full_name, " - Posessions: ", tot_team_posessions_home,
+                    " Avg Duration: ", tot_avg_time_home, " Turnovers: ", tot_turnovers_home, " PassPressure: ", avg_pressurepass_home,
+                    " Shots: ", tot_shots_home , " ShotPressure: ", avg_shot_pressure_home)
     print("*********************************************************")
     print("AWAY - ", game._teams[game._visitor_team_num])
     print(away_results.sort_values('Posessions', ascending=False))
     tot_team_posessions_visitor = np.sum(away_results["Posessions"])
-    tot_seconds_visitor = np.sum(away_results["Seconds"])
+    # tot_seconds_visitor = np.sum(away_results["Seconds"])
     tot_avg_time_visitor = np.sum(away_results["Avg_Time"]) / len(away_results["Avg_Time"])
     tot_turnovers_visitor = np.sum(away_results["Turnovers"])
-    tot_pressurepass_visitor = np.sum(away_results["Avg_PassPressure"]) / len(away_results["Avg_PassPressure"])
-    print(game._teams[game._visitor_team_num]._full_name, " - Posessions: ", tot_team_posessions_visitor, " Seconds: ", tot_seconds_visitor,
-                    " Avg Duration: ", tot_avg_time_visitor, " Turnovers: ", tot_turnovers_visitor, " PassPressure: ", avg_pressurepass_visitor)
+    avg_pressurepass_visitor = np.sum(away_results["Avg_PassPressure"]) / len(away_results["Avg_PassPressure"])
+    tot_shots_visitor = np.sum(away_results["Shots"])
+    avg_shot_pressure_visitor = np.sum(away_results["Avg_ShotPressure"]) / len(away_results["Avg_ShotPressure"])
+    print(game._teams[game._visitor_team_num]._full_name, " - Posessions: ", tot_team_posessions_visitor,
+                    " Avg Duration: ", tot_avg_time_visitor, " Turnovers: ", tot_turnovers_visitor, " PassPressure: ", avg_pressurepass_visitor,
+                    " Shots: ", tot_shots_visitor , " ShotPressure: ", avg_shot_pressure_visitor)
     print("*********************************************************")
     print("COMPARE: home - away")
     posession_diff = tot_team_posessions_home - tot_team_posessions_visitor
-    seconds_diff = tot_seconds_home - tot_seconds_visitor
+    # seconds_diff = tot_seconds_home - tot_seconds_visitor
     avg_time_diff = tot_avg_time_home - tot_avg_time_visitor
     turnovers_diff = tot_turnovers_home - tot_turnovers_visitor
-    pressure_diff = avg_pressurepass_home - tot_pressurepass_visitor
-    print("Posessions: ", posession_diff, " Seconds: ", seconds_diff, " Avg Duration: ", avg_time_diff, " Turnovers: ", turnovers_diff, " Pressure: ", pressure_diff)
+    pressure_diff = avg_pressurepass_home - avg_pressurepass_visitor
+    shot_diff = tot_shots_home - tot_shots_visitor
+    shot_pressure_diff = avg_shot_pressure_home - avg_shot_pressure_visitor
+    print("Posessions: ", posession_diff, " Avg Duration: ", avg_time_diff, " Turnovers: ", turnovers_diff, " Pressure: ", pressure_diff, " Shots: ", shot_diff, " ShotPressure: ", shot_pressure_diff)
     exit()
 
 

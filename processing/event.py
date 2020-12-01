@@ -33,6 +33,16 @@ def angle_between_vectors(a,b):
 def normalize(vec):
     return vec / np.linalg.norm(vec)
 
+def getRadians(x1, y1, x2, y2):
+    ''' Calculates the degrees of angle between two points... posessor should always be first '''
+    return math.atan2(y2-y1, x2-x1)
+
+
+def getL(rad, d_back, d_front):
+    z = (1 - np.cos(rad)) / 2
+    L = d_back + ((d_front - d_back) * (z**3 + (z * 0.3)) / 1.3) #calculate distance limit in that direction
+    return L
+
 
 def distance_numpy(A, B, P):
     """ segment line AB, point P, where each one is an array([x, y]) """
@@ -69,26 +79,29 @@ class Posession(object):
         self._d_front = 15
         self._d_back = 5
         self._pressure = 0.0
-        # self.getPressure()
+        self._posession_pressures = {}
+        self.getPressure(time=round(self._UTC_end,1))
 
-        # self._total_pressure = 0
-        # for p in self._posession_pressures.keys():
-        #     self._total_pressure+=np.sum(np.array(self._posession_pressures[p]))
-        #
-        # try:
-        #     self._pressure_at_posession_loss = np.sum(np.array(self._posession_pressures[max(list(self._posession_pressures.keys()))]))
-        # except:
-        #     self._pressure_at_posession_loss = 0.0
+
+# this is for total possession at once, not just a timestep like in game2
+        self._total_pressure = 0
+        for p in self._posession_pressures.keys():
+            self._total_pressure+=np.sum(np.array(self._posession_pressures[p]))
+
+        try:
+            self._pressure_at_posession_loss = np.sum(np.array(self._posession_pressures[max(list(self._posession_pressures.keys()))]))
+        except:
+            self._pressure_at_posession_loss = 0.0
 
         # print(self._total_pressure)
         # print(self._pressure_at_posession_loss)
         # exit()
 
         # ----- update player
-        # self._posessor._pressure_to_pass.append(self._pressure_at_posession_loss)
-        # self._posessor._posession_time+=self._clocktime_seconds
-        # if self._stolen: self._posessor._steals+=1
-        # if self._turnover: self._posessor._turnovers+=1
+        self._posessor._pressure_to_pass.append(self._pressure_at_posession_loss)
+        self._posessor._posession_time+=self._clocktime_seconds
+        if self._stolen: self._posessor._steals+=1
+        if self._turnover: self._posessor._turnovers+=1
 
     def plotPosession(self, border=None):
 
@@ -162,14 +175,6 @@ class Posession(object):
 
         plt.show()
 
-    def getRadians(self, x1, y1, x2, y2):
-        ''' Calculates the degrees of angle between two points... posessor should always be first '''
-        return math.atan2(y2-y1, x2-x1)
-
-    def getL(self, rad):
-        z = (1 - np.cos(rad)) / 2
-        L = self._d_back + ((self._d_front - self._d_back) * (z**3 + (z * 0.3)) / 1.3) #calculate distance limit in that direction
-        return L
 
     def getPressure(self, time):
         ''' Calculates pressure similar to paper: A visual analysis of pressure in football'''
@@ -177,7 +182,10 @@ class Posession(object):
         q = 1
         # self._posession_pressures = {}
         attacking_net = self._game.getAttackingNet(self._posessor._team, self._period)
-        rad_to_net = self.getRadians(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], attacking_net["X"], attacking_net["Y"])
+
+        time_key = np.argmin((np.abs(np.array(list(self._posessor._hd_UTC_update.keys())) - time)))
+
+        rad_to_net = getRadians(self._posessor._hd_UTC_update[list(self._posessor._hd_UTC_update.keys())[time_key]]["X"], self._posessor._hd_UTC_update[list(self._posessor._hd_UTC_update.keys())[time_key]]["Y"], attacking_net["X"], attacking_net["Y"])
         # print(rad_to_net)
         self._opponents = self._game.getOpponentsOnIce(self._posessor._team, time)
         self._teammates = self._game.getTeammatesOnIce(self._posessor._team, time)
@@ -190,23 +198,27 @@ class Posession(object):
 
 
         timestep_pressure = []
+        timestep_pressers = []
         for i in self._opponents:
             opp = self._game._entities[i["entity_id"]]
             opp_x = opp._hd_UTC_update[round(opp._update_time[i["time_idx"]],1)]["X"]
             opp_y = opp._hd_UTC_update[round(opp._update_time[i["time_idx"]],1)]["Y"]
 
-            d = euclideanDistance(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], opp_x, opp_y)
+            d = euclideanDistance(self._posessor._hd_UTC_update[list(self._posessor._hd_UTC_update.keys())[time_key]]["X"], self._posessor._hd_UTC_update[list(self._posessor._hd_UTC_update.keys())[time_key]]["Y"], opp_x, opp_y)
 
             if d <= self._d_front:
-                rad_to_opp = self.getRadians(self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"], opp_x, opp_y)
+                rad_to_opp = getRadians(self._posessor._hd_UTC_update[list(self._posessor._hd_UTC_update.keys())[time_key]]["X"], self._posessor._hd_UTC_update[list(self._posessor._hd_UTC_update.keys())[time_key]]["Y"], opp_x, opp_y)
                 rad_diff = np.pi - np.absolute(rad_to_net - rad_to_opp)
-                L = self.getL(rad_diff)
+                L = getL(rad_diff, self._d_back, self._d_front)
                 pressure = 100 + (((1 - d) / L) ** q) * 100
 
                 if d < L:
                     timestep_pressure.append(pressure)
+                    timestep_pressers.append(opp)
 
         self._pressure = np.sum(np.array(timestep_pressure))
+        self._pressers = timestep_pressers
+        self._posession_pressures[time] = timestep_pressure
 
         # print("Pressers: ", len(timestep_pressure), " Pressure: ", np.sum(np.array(timestep_pressure)))
         # self.plotPosessionTimestep(time, border=(border_x,border_y))
@@ -244,7 +256,7 @@ class Posession(object):
         #             if d < L:
         #                 timestep_pressure.append(pressure)
         #
-        #     self._posession_pressures[time] = timestep_pressure
+            # self._posession_pressures[time] = timestep_pressure
         #
         #     # print("Pressers: ", len(timestep_pressure), " Pressure: ", np.sum(np.array(timestep_pressure)))
         #     self.plotPosessionTimestep(time, border=(border_x,border_y))
@@ -255,8 +267,10 @@ class Posession(object):
         minimum beta is the most covered the person is
         '''
 
-        posessor = np.array([self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"]])
+        # posessor = np.array([self._posessor._hd_UTC_update[time]["X"], self._posessor._hd_UTC_update[time]["Y"]])
+        posessor = np.array([self._game._entities['1']._hd_UTC_update[time]["X"], self._game._entities['1']._hd_UTC_update[time]["Y"]])
         self._betas = []
+        min_betas_lst, min_betas_player = [], []
 
         for m in self._teammates:
             # print()
@@ -277,24 +291,24 @@ class Posession(object):
                     time_key = getUTCtimekey(opp_obj, time)
                     opp = np.array([opp_obj._hd_UTC_update[time_key]["X"], opp_obj._hd_UTC_update[time_key]["Y"]])
 
-                    betas.append(distance_numpy(posessor, mate, opp))
+                    # betas.append(distance_numpy(posessor, mate, opp) / 200)
 
                     # print(circle_mid, " ", opp)
-                    # dist_to_opp = euclideanDistance(circle_mid[0], circle_mid[1], opp[0], opp[1])
-                    #
-                    # v1 = posessor - opp
-                    # # print(v1)
-                    # v2 = mate - opp
-                    # # print(v2)
-                    # rad = angle_between_vectors(v1, v2)
-                    # # print(rad)
-                    # # exit()
-                    # # rad = getPRQradians(posessor, opp, mate)
-                    #
-                    # if dist_to_opp < r: #beta > 1
-                    #     beta = 1 / np.sin(rad)
-                    # else:
-                    #     beta = np.sin(rad)
+                    dist_to_opp = euclideanDistance(circle_mid[0], circle_mid[1], opp[0], opp[1])
+
+                    v1 = posessor - opp
+                    # print(v1)
+                    v2 = mate - opp
+                    # print(v2)
+                    rad = angle_between_vectors(v1, v2)
+                    # print(rad)
+                    # exit()
+                    # rad = getPRQradians(posessor, opp, mate)
+
+                    if dist_to_opp > r: #beta > 1
+                        beta = 1 / np.sin(rad)
+                    else:
+                        beta = np.sin(rad)
                     # print(opp_obj._last_name, ": ", round(beta,3), " radius: ", r, " radians: ", rad, " dist: ", dist_to_opp)
 
                     # if self._posessor._number == "27" and opp_obj._number == "47" and mate_obj._number == "22":
@@ -307,12 +321,14 @@ class Posession(object):
                     #     print(opp)
                     #     print(mate)
                     #     exit()
-                    # betas.append(beta)
+                    betas.append(beta)
                 min_beta = np.amin(np.array(betas))
+                min_betas_lst.append(min_beta)
+                min_betas_player.append(mate_obj)
                 # print(min_beta)
                 self._betas.append((mate,min_beta))
 
-
+        return min_betas_player[np.argmax(min_betas_lst)]
 
 
     def getTimeKeys(self):
@@ -366,17 +382,23 @@ class Shot(object):
     def __init__(self, game, time, descriptor, info):
         self._game = game
         self._time = time # when the shot was taken
+        self._period = info[0]["ETime"]["Period"]
+        self._clock_minutes = info[0]["ETime"]["ClockMinutes"]
+        self._clock_seconds = info[0]["ETime"]["ClockSeconds"]
         self._shooter = None
         self._loc = None
         self._distance = None
         self._blocker = None
         self._blocked = False
         self._miss = False
+        self._d_front = 15
+        self._d_back = 5
+        self._shot_pressure = 0.0
         self.getShotData(game, descriptor, info)
-        self._period = info[0]["ETime"]["Period"]
-        self._clock_minutes = info[0]["ETime"]["ClockMinutes"]
-        self._clock_seconds = info[0]["ETime"]["ClockSeconds"]
         self.getDistance()
+
+        if self._shooter is not None:
+            self.getShotPressure()
 
         # self.getInformation(info)
         # self.beat = 0
@@ -422,6 +444,49 @@ class Shot(object):
         self._loc = {"X": self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["X"],
                     "Y": self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["Y"],
                     "Z": self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["Z"]}
+
+        self.getShotPressure()
+
+    def getShotPressure(self):
+        ''' Calculates pressure similar to paper: A visual analysis of pressure in football'''
+
+
+        time = round(self._time,1)
+
+        q = 1
+        # self._posession_pressures = {}
+        attacking_net = self._game.getAttackingNet(self._shooter._team, self._period)
+
+        time_key = np.argmin((np.abs(np.array(list(self._shooter._hd_UTC_update.keys())) - time)))
+        rad_to_net = getRadians(self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["X"], self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["Y"], attacking_net["X"], attacking_net["Y"])
+        # print(rad_to_net)
+        self._opponents = self._game.getOpponentsOnIce(self._shooter._team, time)
+        self._teammates = self._game.getTeammatesOnIce(self._shooter._team, time)
+
+        timestep_pressure = []
+        timestep_pressers = []
+        self._shot_presser_lst = {}
+        for i in self._opponents:
+            opp = self._game._entities[i["entity_id"]]
+            opp_x = opp._hd_UTC_update[round(opp._update_time[i["time_idx"]],1)]["X"]
+            opp_y = opp._hd_UTC_update[round(opp._update_time[i["time_idx"]],1)]["Y"]
+
+            d = euclideanDistance(self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["X"], self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["Y"], opp_x, opp_y)
+
+            if d <= self._d_front:
+                rad_to_opp = getRadians(self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["X"], self._shooter._hd_UTC_update[list(self._shooter._hd_UTC_update.keys())[time_key]]["Y"], opp_x, opp_y)
+                rad_diff = np.pi - np.absolute(rad_to_net - rad_to_opp)
+                L = getL(rad_diff, self._d_back, self._d_front)
+                pressure = 100 + (((1 - d) / L) ** q) * 100
+
+                if d < L:
+                    timestep_pressure.append(pressure)
+                    timestep_pressers.append(opp)
+                    self._shot_presser_lst[opp._id] = pressure
+
+        self._shot_pressure = np.sum(np.array(timestep_pressure))
+        # self._shot_presser_lst = timestep_pressers
+        # self._shot_pressures = timestep_pressure
 
     def __repr__(self):
         return "Shot(Period: {}, Clock: {}:{}, Shooter: {}, Distance: {}, Blocked?: {}, Miss?: {})".format(self._period, self._clock_minutes, self._clock_seconds, self._shooter._last_name, self._distance, self._blocked, self._miss)
@@ -504,6 +569,7 @@ class Pass(object):
         self._distance = euclideanDistance(self._origin["X"], self._origin["Y"], self._destination["X"], self._destination["Y"])
         self.getInformation(info)
         self.beat = 0
+        self._overtook_ids = []
         self.beatOpponents(info, game)
 
         # FIXME: origin of the pass is where the passer is at _UTC_update and the destination (x,y) is where the receiver is at self._time
@@ -651,15 +717,22 @@ class Pass(object):
 
         opponents = game.getOpponentsOnIce(self._passer._team, self._time)
         teammates = game.getTeammatesOnIce(self._passer._team, self._time)
+        overtook_count = 0
         for i in opponents:
             opp_net_diff = euclideanDistance(attacking_net["X"], attacking_net["Y"], game._entities[i["entity_id"]]._locX[i["time_idx"]], game._entities[i["entity_id"]]._locY[i["time_idx"]])
             # self.plotPass(game, opponents, teammates, i)
             if pass_origin_len > opp_net_diff and pass_dest_len < opp_net_diff and len(opponents) == 6 and len(teammates) == 6:
                 game._entities[i["entity_id"]]._beaten.append(self._passer._id)
+                game._entities[i["entity_id"]]._beaten_time[round(self._time,1)] = True
+
                 self._passer._overtook.append(i["entity_id"])
+                self._overtook_ids.append(i["entity_id"])
+                overtook_count+=1
                 self.beat+=1
                 # print("passer: ", self._passer._last_name, " receiver: ", self._receiver._last_name, " beat: ", game._entities[i["entity_id"]]._last_name)
                 # self.plotPass(game, opponents, teammates, i)
+
+        self._passer._overtook_time[round(self._time,1)] = overtook_count
 
 # TODO: record the high res data for each player's location and use that at the time of the pass... just use events to get the UTC time of a pass
 

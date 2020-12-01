@@ -67,8 +67,15 @@ class Player(object):
 
         # These are for counting passes
         self._beaten = []
+        self._beaten_time = {}
         self._overtook = []
+        self._overtook_time = {}
         self.total_passes = 0
+        self.blocks = 0
+        self._pressed_shooter_success = []
+        self._pressed_shooter_fail = []
+        self._pressure_to_shoot = []
+
 
 
         if self._team == '25':
@@ -134,8 +141,8 @@ class Player(object):
                     shift = {"start": -1, "end": -1}
 
 
-    def savePlayer(self):
-        fname = sys.argv[-1]+'players/'+self._last_name+self._id+".pkl"
+    def savePlayer(self, fname):
+        fname = fname+'players/'+self._last_name+self._id+".pkl"
         self._fname = fname
         with open(fname, 'wb') as output:
             pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)

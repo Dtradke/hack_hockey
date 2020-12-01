@@ -5,13 +5,13 @@ import pandas as pd
 import pickle
 import os
 import math
+import time
 
 import player_factory
 import rink
 import event
 import print_to_terminal
 
-fname = sys.argv[-1]
 
 # STATS TO TRACK:
 # - shots
@@ -79,7 +79,7 @@ def getGame(fname, teams):
     with open(fname+'Event.json') as f:
         data = json.load(f)
 
-    game = rink.Game(data[0]["Event"], teams=teams)
+    game = rink.Game(data[0]["Event"], teams=teams, fname=fname)
 
     for update in data:
         if update["Event"]["ActualStartUTC"] > game._UTC_start:
@@ -158,9 +158,9 @@ def getShots(fname, game):
     for t in data:
         time = t["PacketSendUTC"]
         event_type = t["Marker"]["MarkerData"][0]["MinorType"]
-        print(event_type)
+        # print(event_type)
         count +=1
-        if count == 100: exit()
+        # if count == 100: exit()
         if event_type == "EventShot":
 
             participants = t["Marker"]["MarkerData"][0]["Participants"]
@@ -182,6 +182,40 @@ def getShots(fname, game):
                 else:
                     # print(t["Marker"]["MarkerData"])
                     game._shots[last_key].updateShot(t["Marker"]["MarkerData"])
+
+    for shot_key in list(game._shots.keys()):
+        shot = game._shots[shot_key]
+        # shot._shooter._shots+=1
+        if shot._blocked:
+            shot._blocker.blocks+=1
+            try:
+                shot._blocker._pressed_shooter_success.append(shot._shot_presser_lst[shot._blocker._id])
+            except:
+                pass
+        else:
+            for player in list(shot._shot_presser_lst.keys()):
+                game._entities[player]._pressed_shooter_fail.append(shot._shot_presser_lst[game._entities[player]._id])
+
+            shot._shooter._pressure_to_shoot.append(shot._shot_pressure)
+
+    # print(game._shots)
+    # print("shots: ", len(game._shots.keys()))
+
+    return game
+
+
+def getScoreBoard(fname, game):
+    with open(fname+'Scoreboard.json') as f:
+        data = json.load(f)
+
+    for t in data:
+        now_UTC = round(t["Scoreboard"]["NowUTC"],1)
+        game._scoreboard[now_UTC] = {"Period": t["Scoreboard"]["Period"],
+                                    "ClockState": t["Scoreboard"]["ClockState"],
+                                    "ClockMinutes": t["Scoreboard"]["ClockMinutes"],
+                                    "ClockSeconds": t["Scoreboard"]["ClockSeconds"],
+                                    "HomeStrength": t["Scoreboard"]["PowerPlayInfo"]["HomeStrength"],
+                                    "VisitorStrength": t["Scoreboard"]["PowerPlayInfo"]["VisitorStrength"]}
 
     return game
 
@@ -237,10 +271,6 @@ def getEventSummary(fname, entities, game):
     for t in range(len(data)):
         entity_data = data[t]["LiveEventSummary"]["EntitySummaries"]
         for ent in entity_data:
-            # if ent["PossessionTime"] > 0:
-            #     print(ent)
-            #     print(game._entities[ent["EntityId"]])
-            #     pos = True
             if "Location" in ent.keys():
                 game._entities[ent["EntityId"]]._onice.append(ent["OnPlayingSurface"])
                 game._entities[ent["EntityId"]]._update_time.append(ent["LocationUTC"])
@@ -255,28 +285,120 @@ def getEventSummary(fname, entities, game):
     # game.graphGame()
     return game
 
-def playGame(game):
-    print("Playing the game synchonusly")
+def playGame(fname, game): #time is the time_key for the game
+    ''' plays the game synchonously '''
 
+    col_lst = ['ID','First','Last','Points']
+    home_results = pd.DataFrame(columns=col_lst)
+    away_results = pd.DataFrame(columns=col_lst)
+
+    all_players_init = {}
+    # scoreboard = {}
+    for i, val in enumerate(list(game._entities.keys())):
+        if val != '1':
+            if game._entities[val]._team == game._home_team_num:
+                home_results.loc[i] = [game._entities[val]._id, game._entities[val]._first_name, game._entities[val]._last_name, 0]
+            if game._entities[val]._team == game._visitor_team_num:
+                away_results.loc[i] = [game._entities[val]._id, game._entities[val]._first_name, game._entities[val]._last_name, 0]
+
+
+            all_players_init[game._entities[val]._id] = {
+                                        "player_team":game._teams[game._entities[val]._team]._full_name,
+                                        "player_number":game._entities[val]._number,
+                                        "player_last_name":game._entities[val]._last_name,
+                                        "X": 0,
+                                        "Y": 0,
+                                        "hits": 0,
+                                        "passes": 0,
+                                        "shots": 0,
+                                        "blocks": 0,
+                                        "let_shot_off": 0,
+                                        "pass_plus_minus": 0,
+                                        "turnover": False,
+                                        "possession":False,
+                                        "points": 0}
+
+    game._game_stats[0] = all_players_init # initialize all of the players to 0 values at the start
+    # print(game._game_stats[0])
+
+    possession_change = False
     cur_posession = None
-    time_key = 0
-    times = list(game._entities['1']._hd_UTC_update.keys())
-    for count, t in enumerate(times):
-        if count > 75:
-        # if np.amin(np.absolute(np.array(list(game._posessions.keys())) - t)) <= 0.1:
+    time_arr = list(game._scoreboard.keys()) #list(game._entities['1']._hd_UTC_update)
+    for counter, t in enumerate(time_arr):
+        if counter <= 5000: #print("Timestep: ", counter, " of ", len(time_arr))
+            if counter%500 == 0: print("Timestep: ", counter, " of ", len(time_arr))
+                # print()
             if np.amin(np.absolute(np.array(list(game._posessions.keys())) - t)) <= 0.1:
                 key_idx = np.argmin(np.absolute(np.array(list(game._posessions.keys())) - t))
                 time_key = list(game._posessions.keys())[key_idx]
                 cur_posession = game._posessions[time_key]
+
             if cur_posession is not None:
+                if np.amin(np.absolute(cur_posession._UTC_end - t)) == 0.0:
+                    possession_change = cur_posession._turnover
                 if t > cur_posession._UTC_end:
                     cur_posession = None
+                    possession_change = False
 
-            time_data = game.runGameSynchonus(t, cur_posession, time_key)
-            # print("count: ", count, " data: ", time_data)
+            else:
+                possession_change = False
+            time_data, cur_posession = game.runGameSynchonusOffline(t, cur_posession, possession_change)
+            game._game_stats[t] = time_data
+
+    game_fname = fname+'game/'+str(game._gameId)+".pkl"
+    with open(game_fname, 'wb') as output:
+        pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
+    print("Game Saved after loading timesteps")
+            # updated = False
+    # for k in list(time_data.keys()):
+    #     if time_data[k]["points"] > 0:
+    #         updated = True
+    #         if k in list(home_results["ID"]):
+    #             # print("last home: ", home_results.loc[home_results["ID"]==k, ["Points"]])
+    #             home_results.loc[home_results["ID"]==k, ["Points"]]+=time_data[k]["points"]
+    #         else:
+    #             # print("last away: ", away_results.loc[away_results["ID"]==k, ["Points"]])
+    #             away_results.loc[away_results["ID"]==k, ["Points"]] += time_data[k]["points"]
+    # # if counter%500 == 0:
+    #     print()
+    #     print("UPDATED: ", counter)
+    #     print(home_results)
+    #     print("**************")
+    #     print(away_results)
+
+                    # if time_data[k]["player_last_name"] == "McDonagh":
+                    #     print(time_data[k])
+                # time.sleep(1)
+
+    return game
+
+        # print(time_data)
+
+        # updated = False
+        # for k in list(time_data.keys()):
+        #     if time_data[k]["points"] > 0:
+        #         updated = True
+        #         if k in list(home_results["ID"]):
+        #             print("last home: ", home_results.loc[home_results["ID"]==k, ["Points"]])
+        #             home_results.loc[home_results["ID"]==k, ["Points"]]+=time_data[k]["points"]
+        #         else:
+        #             print("last away: ", away_results.loc[away_results["ID"]==k, ["Points"]])
+        #             away_results.loc[away_results["ID"]==k, ["Points"]] += time_data[k]["points"]
+        # if updated:
+        #     print()
+        #     print("UPDATED")
+        #     print(home_results)
+        #     print("**************")
+        #     print(away_results)
+
+            #     if time_data[k]["player_last_name"] == "McDonagh":
+            #         print(time_data[k])
+            # time.sleep(1)
+
+    # return time_data, cur_posession
 
 
-def assignMovement(entities):
+def assignMovement(fname, entities):
     ''' This function traverses the EntityTracking.json file
     and assigns position data to entities. I think this is higher resolution
     data than the EventSummary.'''
@@ -322,68 +444,77 @@ def assignMovement(entities):
 
 # NOTE: START HERE
 
-
-if "load_game" in sys.argv:
-    game_fnames = os.listdir(fname+"game/")
-    game = rink.loadGame(fname+"/game/"+game_fnames[0])
-else:
-
-    rink_obj = rink.Rink()
-    teams = makeTeams(fname)
-    game = getGame(fname,teams)
-    game._rink = rink_obj
-
-
-
-    if "load" not in sys.argv:
-        entities = makePlayers(fname, game)
-        entities = assignMovement(entities)
-
-        print("Saving")
-        for i in list(entities.keys()):
-            entities[i].savePlayer()
+def initGame(fname,loadplayers=False, loadgame=False):
+    # print("hello")
+    if loadgame:
+        # print("Loading game")
+        game_fnames = os.listdir(fname+"game/")
+        for game_fname in game_fnames:
+            if game_fname[-8:] != 'Game.pkl':
+                print("Loading game: ", fname+"/game/"+game_fname)
+                game = rink.loadGame(fname+"/game/"+game_fname)
+        return game
     else:
-        print("Loading Entities...")
-        entities = {}
-        entity_fnames = os.listdir(fname+"/players/")
-        for player_fname in entity_fnames:
-            if player_fname[-3:] == 'pkl':
-                player = player_factory.loadPlayer(fname+"/players/"+player_fname)
-                # player.getShifts(rink_obj)
-                entities[player._id] = player
+        print("Making new game")
+        rink_obj = rink.Rink(fname)
+        teams = makeTeams(fname)
+        game = getGame(fname,teams)
+        game._rink = rink_obj
 
-    # heartbeat = getHeartbeat(fname)
-    game = getEventSummary(fname, entities, game)
+        if not loadplayers:
+            entities = makePlayers(fname, game)
+            entities = assignMovement(fname, entities)
 
-    # FACEOFFS
-    game = getFaceOffs(fname, game)
+            # print("Saving")
+            for i in list(entities.keys()):
+                entities[i].savePlayer(fname)
+        else:
+            print("Loading Entities...")
+            entities = {}
+            entity_fnames = os.listdir(fname+"/players/")
+            for player_fname in entity_fnames:
+                if player_fname[-3:] == 'pkl':
+                    player = player_factory.loadPlayer(fname+"/players/"+player_fname)
+                    # player.getShifts(rink_obj)
+                    entities[player._id] = player
 
-    # SHOTS
-    # game = getShots(fname, game)
+        # heartbeat = getHeartbeat(fname)
+        game = getEventSummary(fname, entities, game)
 
-    # HITS
-    game = getHits(fname, game)
+        # SCOREBOARD
+        game = getScoreBoard(fname, game)
 
-    # PASSES
-    game = getPasses(fname, game)
-    # print_to_terminal.rankPassingData(game)
+        # FACEOFFS
+        game = getFaceOffs(fname, game)
 
-    # POSESSION/PRESSURE
-    game = getPosessions(fname, game)
-    # print_to_terminal.rankPosessionData(game)
+        # SHOTS
+        game = getShots(fname, game)
 
-    game_fname = sys.argv[-1]+'game/'+str(game._gameId)+".pkl"
-    with open(game_fname, 'wb') as output:
-        pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
-    print("Game Saved")
-    # exit()
+        # HITS
+        game = getHits(fname, game)
 
-playGame(game)
-exit()
+        # PASSES
+        game = getPasses(fname, game)
+        # print_to_terminal.rankPassingData(game)
+
+        # POSESSION/PRESSURE
+        game = getPosessions(fname, game)
+        print_to_terminal.rankPosessionData(game)
+        exit()
+
+        game_fname = fname+'game/'+str(game._gameId)+"_beforeGame.pkl"
+        with open(game_fname, 'wb') as output:
+            pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
+        print("Game Saved")
 
 
-# for i in entities.keys():
-    # print(entities[i]._last_name, ": ", len(entities[i]._counter))
-    # if entities[i]._last_name == "Johnson":
-    #     entities[i].plotMovement()
-    #     exit()
+        # exit()
+
+    return game #playGame(game)
+
+
+if __name__=="__main__":
+    game = initGame(fname='../../../2019030415/', loadgame=False)
+    print_to_terminal.rankPosessionData(game)
+    exit()
+    playGame(fname='../../../2019030415/', game=game)

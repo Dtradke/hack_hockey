@@ -8,9 +8,8 @@ import matplotlib.pyplot as plt
 # import matplotlib.patches as patches
 from matplotlib.patches import Rectangle
 
-fname = sys.argv[-1]
-
 def loadGame(fname):
+    print(fname)
     with open(fname, "rb") as f:
         game = pickle.load(f)
     return game
@@ -19,7 +18,7 @@ def close_event():
     plt.close()
 
 class Game(object):
-    def __init__(self, info, teams):
+    def __init__(self, info, teams, fname):
         self._gameId = info["EventId"]
         self._sport = info["Sport"]
         self._league = info["League"]
@@ -35,17 +34,44 @@ class Game(object):
         self._hits = {}
         self._faceoffs = {}
         self._posessions = {}
+        self.getRinkDims(fname)
+        self._game_stats = {}
+        self._scoreboard = {}
+        # self._fig, self._ax = getRink(fname)
 
 
     def getRinkPlot(self):
-        fig, ax = getRink()
+        fig, ax = getRink(fname)
         return fig, ax
+
+    def getRinkDims(self, fname):
+
+        with open(fname+'PlayingSurface.json') as f:
+            data = json.load(f)
+
+        # fig = plt.figure(figsize=(14,5))
+        # ax = fig.add_subplot(111)
+
+        # print(data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Boundary"]["Rectangle"])
+        # ---- Gets full rink
+        self._rink_sx = data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Boundary"]["Rectangle"]['SX']
+        self._rink_sy = data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Boundary"]["Rectangle"]['SY']
+        self._rink_x_len = data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Boundary"]["Rectangle"]['EX'] - self._rink_sx
+        self._rink_y_len = data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Boundary"]["Rectangle"]['EY'] - self._rink_sy
+
+
+        zones = data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Sections"]
+        self._zone_arr = []
+        for i in zones:
+            sx = i["Rectangle"]["SX"]
+            sy = i["Rectangle"]["SY"]
+            x_len = i["Rectangle"]["EX"] - sx
+            y_len = i["Rectangle"]["EY"] - sy
+            self._zone_arr.append([sx, sy, x_len, y_len])
 
 
     def runGameSynchonus(self, time, cur_posession, time_key):
         ''' This plays the game synchonusly '''
-        # if np.amin(np.absolute(np.array(list(self._passes.keys())) - time) < 0.2:
-            # if np.amin(np.absolute(np.array(list(self._hits.keys())) - time)) <= 0.1:
 
         time_data = {"entities": [],
                     "faceoffs":[],
@@ -53,52 +79,80 @@ class Game(object):
                     "pass": [],
                     "posession": []}
 
-        fig, ax = getRink()
+        # fig, ax = self.getRinkFast() #getRink()
 
         if cur_posession is not None:
             key = np.argmin(np.abs(np.array(list(cur_posession._posessor._hd_UTC_update.keys())) - time))
             key = list(cur_posession._posessor._hd_UTC_update.keys())[key]
             cur_posession.getPressure(key)
 
-            cur_posessor = np.array([cur_posession._posessor._hd_UTC_update[key]["X"], cur_posession._posessor._hd_UTC_update[key]["Y"]])
+            # cur_posessor = np.array([cur_posession._posessor._hd_UTC_update[key]["X"], cur_posession._posessor._hd_UTC_update[key]["Y"]])
+            cur_posessor = np.array([self._entities['1']._hd_UTC_update[key]["X"], self._entities['1']._hd_UTC_update[key]["Y"]])
 
-            cur_posession.getPasslanes(key)
-            for b in cur_posession._betas:
-                plt.plot([cur_posessor[0], b[0][0]], [cur_posessor[1], b[0][1]])
-                annotations = np.mean(np.array([cur_posessor, np.array(b[0])]), axis=0)
-                ax.annotate(round(b[1],3),(annotations[0], annotations[1]))
+            most_open_mate = cur_posession.getPasslanes(key)
+            # bs = []
+            # for b in cur_posession._betas:
+            #     bs.append(b[1])
+            #
+            # for b in cur_posession._betas:
+            #
+            #     # annotations = np.mean(np.array([cur_posessor, np.array(b[0])]), axis=0)
+            #     if b[1] == np.amax(np.array(bs)):
+            #         plt.plot([cur_posessor[0], b[0][0]], [cur_posessor[1], b[0][1]], c='green')
+            #         ax.annotate(round(b[1],3),(b[0][0], b[0][1]+5), c='green', fontsize=15)
+            #     else:
+            #         plt.plot([cur_posessor[0], b[0][0]], [cur_posessor[1], b[0][1]], c='red')
+            #         ax.annotate(round(b[1],3),(b[0][0], b[0][1]+5), c='red', fontsize=15)
+            #
 
-
-            time_data["posession"] = cur_posession
-            plt.scatter(cur_posessor[0], cur_posessor[1], s=160, c='y', label='Posession')
-            # ax.annotate(round(cur_posession._pressure,1),(cur_posession._posessor._hd_UTC_update[key]["X"]+5, cur_posession._posessor._hd_UTC_update[key]["Y"]+5))
+            # time_data["posession"] = cur_posession
+            # plt.scatter(cur_posessor[0], cur_posessor[1], s=160, c='y', label='Posession')
+            # ax.annotate("Pressure: " + str(round(cur_posession._pressure,1)),(50, -50), fontsize=15)
+            time_data["posession"].append({"possessor_id": cur_posession._posessor._id,
+                                            "pressure": cur_posession._pressure})
+                # TODO: add in passing lanes
 
 
         # ---- faceoffs
         if np.amin(np.absolute(np.array(list(self._faceoffs.keys())) - time)) == 0:
             key = np.argmin(np.absolute(np.array(list(self._faceoffs.keys())) - time))
             faceoff = self._faceoffs[list(self._faceoffs.keys())[key]]
-            plt.scatter(faceoff._loc["X"], faceoff._loc["Y"], s=160, c='c', label='Faceoff')
-            plt.title(faceoff)
-            time_data["faceoffs"].append(faceoff)
+            time_data["faceoffs"].append({"X": faceoff._loc["X"],
+                                        "Y":faceoff._loc["Y"]})
+            # plt.scatter(faceoff._loc["X"], faceoff._loc["Y"], s=160, c='c', label='Faceoff')
+            # plt.title(faceoff)
+            # time_data["faceoffs"].append(faceoff)
 
         # ---- hits
         if np.amin(np.absolute(np.array(list(self._hits.keys())) - time)) == 0:
             key = np.argmin(np.absolute(np.array(list(self._hits.keys())) - time))
             hit_event = self._hits[list(self._hits.keys())[key]]
-            plt.scatter(hit_event._loc["X"], hit_event._loc["Y"], s=160, c='y', label='Hit')
-            plt.title(hit_event)
-            time_data["hit"].append(hit_event)
+            time_data["hit"].append({"hitter": hit_event._hitter._id,
+                                    "hitter_team":self._teams[hit_event._hitter._team]._full_name,
+                                    "hitter_number":hit_event._hitter._number,
+                                    "hitter_last_name":hit_event._hitter._last_name,
+                                    "X": hit_event._loc["X"],
+                                    "Y": hit_event._loc["Y"],
+                                    "points": 1})
+            # plt.scatter(hit_event._loc["X"], hit_event._loc["Y"], s=160, c='y', label='Hit')
+            # plt.title(hit_event)
+            # time_data["hit"].append(hit_event)
 
         for e in self._entities.keys():
             try:
                 key = np.argmin(np.abs(np.array(list(self._entities[e]._hd_UTC_update.keys())) - time))
                 key = list(self._entities[e]._hd_UTC_update.keys())[key]
                 if self._entities[e]._hd_UTC_update[key]["_onice"]:
-                    plt.scatter(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"], s=self._entities[e]._size, c=self._entities[e]._color, label=self._entities[e]._number+self._entities[e]._last_name)
-                    if self._entities[e]._id != '1':
-                        ax.annotate(self._entities[e]._number,(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"]))
-                    time_data["entities"].append(self._entities[e])
+                    # plt.scatter(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"], s=self._entities[e]._size, c=self._entities[e]._color, label=self._entities[e]._number+self._entities[e]._last_name)
+                    # if self._entities[e]._id != '1':
+                    #     ax.annotate(self._entities[e]._number,(self._entities[e]._hd_UTC_update[key]["X"], self._entities[e]._hd_UTC_update[key]["Y"]))
+                    # time_data["entities"].append(self._entities[e])
+                    time_data["entities"].append({"player_id":self._entities[e]._id,
+                                                "player_team":self._teams[self._entities[e]._team]._full_name,
+                                                "player_number":self._entities[e]._number,
+                                                "player_last_name":self._entities[e]._last_name,
+                                                "X": self._entities[e]._hd_UTC_update[key]["X"],
+                                                "Y": self._entities[e]._hd_UTC_update[key]["Y"]})
             except:
                 pass
 
@@ -107,11 +161,23 @@ class Game(object):
             key = np.argmin(np.absolute(np.array(list(self._passes.keys())) - time))
             pass_event = self._passes[list(self._passes.keys())[key]]
             # print("PASS: ", pass_event)
-            plt.scatter(pass_event._origin["X"], pass_event._origin["Y"], s=40, c='r', label='Origin')
-            plt.scatter(pass_event._destination["X"], pass_event._destination["Y"], s=40, c='c', label='Destination')
-            plt.plot([pass_event._origin["X"], pass_event._destination["X"]], [pass_event._origin["Y"], pass_event._destination["Y"]], c='r')
-            plt.title(pass_event)
-            time_data["pass"].append(pass_event)
+            # plt.scatter(pass_event._origin["X"], pass_event._origin["Y"], s=40, c='r', label='Origin')
+            # plt.scatter(pass_event._destination["X"], pass_event._destination["Y"], s=40, c='c', label='Destination')
+            # plt.plot([pass_event._origin["X"], pass_event._destination["X"]], [pass_event._origin["Y"], pass_event._destination["Y"]], c='r')
+            # plt.title(pass_event)
+            # time_data["pass"].append(pass_event)
+
+            multiplier = 1
+            if pass_event._turnover:
+                multiplier = -1
+
+            time_data["pass"].append({"passer_id": pass_event._passer._id,
+                                    "passer_team":self._teams[pass_event._passer._team]._full_name,
+                                    "passer_number":pass_event._passer._number,
+                                    "passer_last_name":pass_event._passer._last_name,
+                                    "overtook": pass_event._overtook,
+                                    "turnover": pass_event._turnover,
+                                    "points": (multiplier*(cur_posession._pressure/100)*pass_event._overtook)})
 
         # ---- shots
         # if np.amin(np.array(list(self._shots.keys())) - time) < 0.2:
@@ -127,10 +193,180 @@ class Game(object):
         # else:
         #     plt.title(key)
 
-        plt.legend()
-        plt.show()
+        # plt.legend()
+        # # plt.show()
+        # plt.savefig(sys.argv[-1]+'imgs/'+str(time)+".pdf", dpi=300) #,bbox_inches='tight'
+        # plt.close()
         return time_data
 
+    def runGameSynchonusOffline(self, time, cur_posession, possession_change):
+        ''' This plays the game synchonusly '''
+
+        # time_data = {"entities": [],
+        #             "faceoffs":[],
+        #             "hit": [],
+        #             "pass": [],
+        #             "posession": []}
+        time_data = {} # keys will be player ids
+
+        for e in self._entities.keys():
+            try:
+                key = np.argmin(np.abs(np.array(list(self._entities[e]._hd_UTC_update.keys())) - time))
+                key = list(self._entities[e]._hd_UTC_update.keys())[key]
+                if self._entities[e]._hd_UTC_update[key]["_onice"]:
+                    time_data[self._entities[e]._id] = {
+                                                "player_team":self._teams[self._entities[e]._team]._full_name,
+                                                "player_number":self._entities[e]._number,
+                                                "player_last_name":self._entities[e]._last_name,
+                                                "X": self._entities[e]._hd_UTC_update[key]["X"],
+                                                "Y": self._entities[e]._hd_UTC_update[key]["Y"],
+                                                "hits": 0,
+                                                "passes": 0,
+                                                "shots": 0,
+                                                "blocks": 0,
+                                                "let_shot_off": 0,
+                                                "pass_plus_minus": 0,
+                                                "turnover": False,
+                                                "possession":False,
+                                                "points": 0}
+            except:
+                pass
+
+        # print("cur pos: ", cur_posession)
+        if cur_posession is not None:
+            key = np.argmin(np.abs(np.array(list(cur_posession._posessor._hd_UTC_update.keys())) - time))
+            pressure_key = list(cur_posession._posessor._hd_UTC_update.keys())[key]
+            cur_posession.getPressure(pressure_key)
+
+            key = np.argmin(np.abs(np.array(list(self._entities['1']._hd_UTC_update.keys())) - time))
+            key = list(self._entities['1']._hd_UTC_update.keys())[key]
+            # cur_posessor = np.array([cur_posession._posessor._hd_UTC_update[key]["X"], cur_posession._posessor._hd_UTC_update[key]["Y"]])
+            cur_posessor = np.array([self._entities['1']._hd_UTC_update[key]["X"], self._entities['1']._hd_UTC_update[key]["Y"]])
+
+            most_open_mate = cur_posession.getPasslanes(key)
+
+            time_data[cur_posession._posessor._id]["possession"] = True
+            time_data[cur_posession._posessor._id]["points"]+= cur_posession._pressure/1000 #mini points bump for handling pressure
+
+            if possession_change:
+                time_data[cur_posession._posessor._id]["points"]-=4
+                time_data[cur_posession._posessor._id]["turnover"] = True
+
+            # time_data["posession"] = cur_posession
+            # time_data["posession"].append({"possessor_id": cur_posession._posessor._id,
+            #                                 "pressure": cur_posession._pressure})
+                # TODO: add in passing lanes
+
+
+        # ---- faceoffs -> dont need faceoffs for points... wins are added to passes
+        # if np.amin(np.absolute(np.array(list(self._faceoffs.keys())) - time)) == 0:
+        #     key = np.argmin(np.absolute(np.array(list(self._faceoffs.keys())) - time))
+        #     faceoff = self._faceoffs[list(self._faceoffs.keys())[key]]
+        #     time_data["faceoffs"].append({"X": faceoff._loc["X"],
+        #                                 "Y":faceoff._loc["Y"]})
+
+        # ---- hits
+        if np.amin(np.absolute(np.array(list(self._hits.keys())) - time)) == 0:
+            key = np.argmin(np.absolute(np.array(list(self._hits.keys())) - time))
+            hit_event = self._hits[list(self._hits.keys())[key]]
+            del self._hits[list(self._hits.keys())[key]]
+
+            time_data[hit_event._hitter._id]["points"]+= 1 # plus 1 for a hit
+            # time_data[hit_event._hittee._id]["points"]-= 1 # minus 1 when getting hit
+            time_data[hit_event._hitter._id]["hits"]+= 1 # plus 1 for a hit
+            # time_data[hit_event._hittee._id]["hits"]-= 1 # minus 1 when getting hit
+
+
+
+        # ---- passes
+        if np.amin(np.absolute(np.array(list(self._passes.keys())) - time)) <= 0.1:
+            key = np.argmin(np.absolute(np.array(list(self._passes.keys())) - time))
+            pass_event = self._passes[list(self._passes.keys())[key]]
+            del self._passes[list(self._passes.keys())[key]]
+
+            # print("pass: ", pass_event)
+            try:
+                if pass_event._receiver._id == most_open_mate._id: #made most open pass
+                    pass_points = 1 + ((cur_posession._pressure/100)+pass_event.beat) * 2
+                else:
+                    pass_points = 1 + ((cur_posession._pressure/100)+pass_event.beat)
+            except:
+                pass_points = 1 + ((0.5)+pass_event.beat)
+
+
+            time_data[pass_event._passer._id]["points"]+= pass_points
+            time_data[pass_event._passer._id]["passes"]+= 1
+
+            for beat_player in pass_event._overtook_ids:
+                time_data[beat_player]["points"]-= 1
+                time_data[beat_player]["passes"]-= 1
+
+        # ---- shots
+        if np.amin(np.absolute(np.array(list(self._shots.keys())) - time)) < 0.2:
+            key = np.argmin(np.absolute(np.array(list(self._shots.keys())) - time))
+            shot_event = self._shots[list(self._shots.keys())[key]]
+            del self._shots[list(self._shots.keys())[key]]
+
+            if cur_posession is not None:
+                shot_points = ((cur_posession._pressure/100)+2)
+            else:
+                shot_points = 1
+
+            if shot_event._shooter._id not in list(time_data.keys()):
+                self.addPlayer(shot_event._shooter, time_data)
+
+
+            # _blocked, _blocker
+            if shot_event._blocked:
+                time_data[shot_event._shooter._id]["points"]-=shot_points
+
+                if shot_event._blocker._id not in list(time_data.keys()):
+                    self.addPlayer(shot_event._blocker, time_data)                      # negative points if shot blocked
+                time_data[shot_event._blocker._id]["points"]+=shot_points                       # points go to  blocker
+            else:
+                # print(time_data.keys())
+                time_data[shot_event._shooter._id]["points"]+=shot_points                       # points for a shot
+                time_data[shot_event._shooter._id]["shots"]+=1                                  # increments number of shots
+                if cur_posession is not None:
+                    for presser in cur_posession._pressers:
+                        time_data[presser._id]["points"]-=((cur_posession._pressure/100)+1)          # punish if presser lets player get shot off
+                        time_data[presser._id]["let_shot_off"]+=1                                # times a presser let a shot get off
+        return time_data, cur_posession
+
+    def addPlayer(self, player, time_data):
+        time_data[player._id] = {
+                                    "player_team":self._teams[player._team]._full_name,
+                                    "player_number":player._number,
+                                    "player_last_name":player._last_name,
+                                    "X": 0,
+                                    "Y": 0,
+                                    "hits": 0,
+                                    "passes": 0,
+                                    "shots": 0,
+                                    "blocks": 0,
+                                    "let_shot_off": 0,
+                                    "pass_plus_minus": 0,
+                                    "turnover": False,
+                                    "possession":False,
+                                    "points": 0}
+        return time_data
+
+    def getRinkFast(self, fname):
+        fig = plt.figure(figsize=(14,5))
+        ax = fig.add_subplot(111)
+
+
+        for i in self._zone_arr:
+            ax.add_patch(Rectangle((i[0],i[1]),i[2],i[3], ec='k', lw=2,fill=False)) #np.random.rand(3,) ,label=name
+
+
+        ax.add_patch(Rectangle((self._rink_sx,self._rink_sy),self._rink_x_len,self._rink_y_len, ec='k', lw=2,fill=False,label="Rink"))
+        plt.xlim(left=-110, right=160)
+        plt.ylim(bottom=-55, top=55)
+        plt.axvline(0,ymin=0.12, ymax=0.88, c='r')
+        # plt.legend()
+        return fig, ax
+        # plt.show()
 
 
     def graphGame(self):
@@ -226,8 +462,8 @@ class Game(object):
         return "Game(Id: {}, Home: {}, Away: {}, StartUTC: {}, EndUTC: {})".format(self._gameId, self._home_team_num, self._visitor_team_num, self._UTC_start, self._UTC_end)
 
 class Rink(object):
-    def __init__(self):
-        self._zones = getZones()
+    def __init__(self, fname=None):
+        self._zones = getZones(fname)
 
     def getZone(self, x, y):
         zones = []
@@ -253,7 +489,7 @@ class Zone(object):
 
 
 
-def getZones():
+def getZones(fname):
     zone_dict = {}
     with open(fname+'PlayingSurface.json') as f:
         data = json.load(f)
@@ -277,7 +513,10 @@ def getZones():
 
 
 
-def getRink():
+
+
+
+def getRink(fname):
 
     with open(fname+'PlayingSurface.json') as f:
         data = json.load(f)
