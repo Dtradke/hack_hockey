@@ -6,6 +6,7 @@ import pickle
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import rink
+import passing_lane_functions
 
 
 def loadPlayer(fname):
@@ -57,9 +58,13 @@ class Player(object):
         self._accX, self._accY, self._accZ = [], [], []
         self._posession_lst = []
         self._turnovers = 0
+        self._takeaways = 0
+        self._takeaway_difficulty = []
         self._steals = 0
         self._posession_time = 0
         self._pressure_to_pass = [] # array with the pressures on a player when they give up the puck
+        self._openness = []
+        self._pressure_on_shooter = []
 
 
         # for HD resolution tracking
@@ -75,6 +80,14 @@ class Player(object):
         self._pressed_shooter_success = []
         self._pressed_shooter_fail = []
         self._pressure_to_shoot = []
+        self._pass_risk = []
+
+        self._overtook_val = 0
+        self._beaten_val = 0
+        self._time_of_possession = 0
+        self._speeds = []
+        self._beaten_ratio = []
+        self._overtook_ratio = []
 
 
 
@@ -89,6 +102,79 @@ class Player(object):
             self._size = 10
 
         # player = data[0]["EntityTracking"]["TrackingData"][0]["EntityId"]
+
+    def resetPasses(self):
+        self._overtook_val = 0
+        self._beaten_val = 0
+        self._overtook = []
+        self._pass_risk = []
+
+        self._beaten_ratio = []
+        self._overtook_ratio = []
+
+
+
+    def generatePassHeatmap(self, games):
+        self._pass_mtx = np.zeros((201,201)) # self = 101,101
+        self_idx = np.array([101,101])
+        self._pass_mtx[101,101] = 1
+        t = 0.25
+
+        rs = []
+        risk = []
+        mins_played = 0
+        for g_count, g in enumerate(games):
+            pass_flag = False
+            for p in g._passes.keys():
+                pass_obj = g._passes[p]
+                if pass_obj._passer._id == self._id:
+                    if g_count == 0 and not pass_flag:
+                        mins_played += (89.65/60) #overtime
+                        pass_flag = True
+                    elif g_count == 1 and not pass_flag:
+                        mins_played += 1
+                        pass_flag = True
+
+                    dx = pass_obj._destination["X"] - pass_obj._origin["X"]
+                    dy = pass_obj._destination["Y"] - pass_obj._origin["Y"]
+
+                    if pass_obj._attacking_net['X'] > 0:
+                        dx = -1*dx
+                        dy = -1*dy
+
+                    r = np.array([self_idx[1] + dy, self_idx[0] + dx])
+                    rs.append(r)
+
+                    for yy in range(self._pass_mtx.shape[0]): # loop though y
+                        for xx in range(self._pass_mtx.shape[1]): # loop through x
+                            in_lane = passing_lane_functions.opp_in_ROI(self_idx,r,np.array([xx,yy]),pass_obj._pass_risk,t)
+                            if in_lane:
+                                self._pass_mtx[yy,xx]+=1
+
+
+        mean_r = np.mean(np.array(rs), axis=0)
+
+
+        im2 = plt.imshow(self._pass_mtx, cmap='gist_heat_r')
+        plt.arrow(101, 101, (mean_r[1]-101), (mean_r[0]-101), color='k', ec=self._color, length_includes_head=True,head_width=3, head_length=6, label='Mean Pass')
+        plt.scatter(101,101, c=self._color, s=100, marker='^', label=self._last_name)
+        plt.legend(fontsize=14, loc='upper left')
+        plt.yticks([0,50,100,150,200], ["100", "50", "0", "-50", "-100"], fontsize=16)
+        plt.xticks([0,50,100,150,200], ["-100", "-50", "0", "50", "100"], fontsize=16)
+        plt.ylabel("Front/Back Distance (ft)", fontsize=18)
+        plt.xlabel("Side/Side Distance (ft)", fontsize=18)
+        plt.title(self._first_name+" "+self._last_name+" PAv; Pos: "+self._pos, fontsize=18)
+        plt.arrow(5, 196, 0, -30, color='k', length_includes_head=True,head_width=5, head_length=10)
+        plt.text(10,196, "Attacking Direction", fontsize=16)
+        # plt.text(140,10, "PASS = "+str(round(np.array(self._pass_risk).size / mins_played,2)), fontsize=14)
+        # plt.text(140,35, "PAv = "+str(round(np.mean(np.array(self._pass_risk)),2)), fontsize=14)
+        plt.colorbar(im2)
+        # plt.show()
+        fname = "../../Paper/paper_imgs/scatterplots/heatmaps/"+self._last_name+"PAv.png"
+        plt.savefig(fname,bbox_inches='tight', dpi=300)
+        plt.close()
+        # exit()
+
 
 
     def plotMovement(self):
@@ -139,6 +225,7 @@ class Player(object):
                 if shift["start"] != -1 and shift["end"] != -1:
                     self._shifts.append(shift)
                     shift = {"start": -1, "end": -1}
+
 
 
     def savePlayer(self, fname):

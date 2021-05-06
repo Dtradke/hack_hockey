@@ -7,9 +7,11 @@ import os
 import matplotlib.pyplot as plt
 # import matplotlib.patches as patches
 from matplotlib.patches import Rectangle
+from scipy.special import softmax
+from matplotlib.lines import Line2D
 
 def loadGame(fname):
-    print(fname)
+    # print(fname)
     with open(fname, "rb") as f:
         game = pickle.load(f)
     return game
@@ -28,7 +30,6 @@ class Game(object):
         self._UTC_end = info["ActualEndUTC"]
         self._code = info["OfficialCode"]
         self._teams = teams
-        self._posessions = {}
         self._passes = {}
         self._shots = {}
         self._hits = {}
@@ -37,11 +38,15 @@ class Game(object):
         self.getRinkDims(fname)
         self._game_stats = {}
         self._scoreboard = {}
+        self._goals = {}
+        self._who_has_possession = {}
+        self._takeaways = {}
+
         # self._fig, self._ax = getRink(fname)
 
 
     def getRinkPlot(self):
-        fig, ax = getRink(fname)
+        fig, ax = getRink(fname='../../2019030415/')
         return fig, ax
 
     def getRinkDims(self, fname):
@@ -69,6 +74,17 @@ class Game(object):
             y_len = i["Rectangle"]["EY"] - sy
             self._zone_arr.append([sx, sy, x_len, y_len])
 
+    def cleanPossessions(self):
+        ''' gets rid of dirty data possessions '''
+        new_possessions = {}
+        for p in self._posessions.keys():
+            if self._posessions[p]._clocktime_seconds >= 0:
+                new_possessions[p] = self._posessions[p]
+                # self._posessions[p]._posessor._time_of_possession+=self._posessions[p]._posession_UTC_keys.size
+            else:
+                print("Dirty Possession: ", self._posessions[p])
+        # print("Deleted: ", len(self._posessions.keys()) - len(new_possessions.keys()))
+        self._posessions = new_possessions
 
     def runGameSynchonus(self, time, cur_posession, time_key):
         ''' This plays the game synchonusly '''
@@ -89,7 +105,9 @@ class Game(object):
             # cur_posessor = np.array([cur_posession._posessor._hd_UTC_update[key]["X"], cur_posession._posessor._hd_UTC_update[key]["Y"]])
             cur_posessor = np.array([self._entities['1']._hd_UTC_update[key]["X"], self._entities['1']._hd_UTC_update[key]["Y"]])
 
-            most_open_mate = cur_posession.getPasslanes(key)
+            # most_open_mate = cur_posession.getPasslanes(time) #key
+            most_open_mate = cur_posession.getPasslanes_HalfCircleBeta(time) #key
+
             # bs = []
             # for b in cur_posession._betas:
             #     bs.append(b[1])
@@ -210,27 +228,28 @@ class Game(object):
         time_data = {} # keys will be player ids
 
         for e in self._entities.keys():
-            try:
+            if self._entities[e]._team in list(self._teams.keys()) and len(list(self._entities[e]._hd_UTC_update.keys())) > 100:
                 key = np.argmin(np.abs(np.array(list(self._entities[e]._hd_UTC_update.keys())) - time))
                 key = list(self._entities[e]._hd_UTC_update.keys())[key]
-                if self._entities[e]._hd_UTC_update[key]["_onice"]:
-                    time_data[self._entities[e]._id] = {
-                                                "player_team":self._teams[self._entities[e]._team]._full_name,
-                                                "player_number":self._entities[e]._number,
-                                                "player_last_name":self._entities[e]._last_name,
-                                                "X": self._entities[e]._hd_UTC_update[key]["X"],
-                                                "Y": self._entities[e]._hd_UTC_update[key]["Y"],
-                                                "hits": 0,
-                                                "passes": 0,
-                                                "shots": 0,
-                                                "blocks": 0,
-                                                "let_shot_off": 0,
-                                                "pass_plus_minus": 0,
-                                                "turnover": False,
-                                                "possession":False,
-                                                "points": 0}
-            except:
-                pass
+                # if self._entities[e]._hd_UTC_update[key]["_onice"]:
+                time_data[self._entities[e]._id] = {
+                                            "player_team":self._teams[self._entities[e]._team]._full_name,
+                                            "player_number":self._entities[e]._number,
+                                            "player_last_name":self._entities[e]._last_name,
+                                            "X": self._entities[e]._hd_UTC_update[key]["X"],
+                                            "Y": self._entities[e]._hd_UTC_update[key]["Y"],
+                                            "goals": 0,
+                                            "hits": 0,
+                                            "passes": 0,
+                                            "shots": 0,
+                                            "shot_attempts": 0,
+                                            "blocks": 0,
+                                            "let_shot_off": 0,
+                                            "pass_plus_minus": 0,
+                                            "turnover": 0,
+                                            "possession":0,
+                                            "points": 0}
+
 
         # print("cur pos: ", cur_posession)
         if cur_posession is not None:
@@ -243,14 +262,24 @@ class Game(object):
             # cur_posessor = np.array([cur_posession._posessor._hd_UTC_update[key]["X"], cur_posession._posessor._hd_UTC_update[key]["Y"]])
             cur_posessor = np.array([self._entities['1']._hd_UTC_update[key]["X"], self._entities['1']._hd_UTC_update[key]["Y"]])
 
-            most_open_mate = cur_posession.getPasslanes(key)
+            # most_open_mate = cur_posession.getPasslanes(key)
+            most_open_mate = cur_posession.getPasslanes_HalfCircleBeta(key)
 
-            time_data[cur_posession._posessor._id]["possession"] = True
+            attacking_zone = self.isAttackingZone(time, cur_posession, cur_posession._posessor)
+            if attacking_zone == 'offensive': zone_multiplier = 1.25
+            elif attacking_zone == 'defensive': zone_multiplier = 0.75
+            else: zone_multiplier = 1
+
+            time_data[cur_posession._posessor._id]["possession"]+=(1 * zone_multiplier)
             time_data[cur_posession._posessor._id]["points"]+= cur_posession._pressure/1000 #mini points bump for handling pressure
 
             if possession_change:
                 time_data[cur_posession._posessor._id]["points"]-=4
-                time_data[cur_posession._posessor._id]["turnover"] = True
+
+                if attacking_zone == 'offensive': zone_multiplier = 0.75
+                elif attacking_zone == 'defensive': zone_multiplier = 1.25
+                else: zone_multiplier = 1
+                time_data[cur_posession._posessor._id]["turnover"]+=(1 * zone_multiplier)
 
             # time_data["posession"] = cur_posession
             # time_data["posession"].append({"possessor_id": cur_posession._posessor._id,
@@ -269,20 +298,29 @@ class Game(object):
         if np.amin(np.absolute(np.array(list(self._hits.keys())) - time)) == 0:
             key = np.argmin(np.absolute(np.array(list(self._hits.keys())) - time))
             hit_event = self._hits[list(self._hits.keys())[key]]
-            del self._hits[list(self._hits.keys())[key]]
+            # del self._hits[list(self._hits.keys())[key]]
 
             time_data[hit_event._hitter._id]["points"]+= 1 # plus 1 for a hit
             # time_data[hit_event._hittee._id]["points"]-= 1 # minus 1 when getting hit
             time_data[hit_event._hitter._id]["hits"]+= 1 # plus 1 for a hit
             # time_data[hit_event._hittee._id]["hits"]-= 1 # minus 1 when getting hit
 
+        # ----- goals
+        if np.amin(np.absolute(np.array(list(self._goals.keys())) - time)) == 0:
+            key = np.argmin(np.absolute(np.array(list(self._goals.keys())) - time))
+            goal_event = self._goals[list(self._goals.keys())[key]]
+            # del self._goals[list(self._goals.keys())[key]]
 
+            time_data[goal_event._scorer._id]["points"]+= 5 # plus 1 for a hit
+            # time_data[hit_event._hittee._id]["points"]-= 1 # minus 1 when getting hit
+            time_data[goal_event._scorer._id]["goals"]+= 1 # plus 1 for a hit
+            # time_data[hit_event._hittee._id]["hits"]-= 1 # minus 1 when getting hit
 
         # ---- passes
-        if np.amin(np.absolute(np.array(list(self._passes.keys())) - time)) <= 0.1:
+        if np.amin(np.absolute(np.array(list(self._passes.keys())) - time)) == 0:
             key = np.argmin(np.absolute(np.array(list(self._passes.keys())) - time))
             pass_event = self._passes[list(self._passes.keys())[key]]
-            del self._passes[list(self._passes.keys())[key]]
+            # del self._passes[list(self._passes.keys())[key]]
 
             # print("pass: ", pass_event)
             try:
@@ -294,18 +332,28 @@ class Game(object):
                 pass_points = 1 + ((0.5)+pass_event.beat)
 
 
-            time_data[pass_event._passer._id]["points"]+= pass_points
-            time_data[pass_event._passer._id]["passes"]+= 1
+            attacking_zone = self.isAttackingZone(time, pass_event, pass_event._passer)
+            if attacking_zone == 'offensive': zone_multiplier = 1.25
+            elif attacking_zone == 'defensive': zone_multiplier = 0.75
+            else: zone_multiplier = 1
 
-            for beat_player in pass_event._overtook_ids:
-                time_data[beat_player]["points"]-= 1
-                time_data[beat_player]["passes"]-= 1
+
+            time_data[pass_event._passer._id]["points"]+= pass_points
+            time_data[pass_event._passer._id]["passes"]+= (1 * zone_multiplier)
+            time_data[pass_event._passer._id]["pass_plus_minus"]+=len(pass_event._overtook_ids)
+
+            # for beat_player in pass_event._overtook_ids:
+            #     try:                                                            #FIXME: this is a hack
+            #         time_data[beat_player]["points"]-= 1
+            #         time_data[beat_player]["pass_plus_minus"]-= 1
+            #     except:
+            #         pass
 
         # ---- shots
-        if np.amin(np.absolute(np.array(list(self._shots.keys())) - time)) < 0.2:
+        if np.amin(np.absolute(np.array(list(self._shots.keys())) - time)) == 0:
             key = np.argmin(np.absolute(np.array(list(self._shots.keys())) - time))
             shot_event = self._shots[list(self._shots.keys())[key]]
-            del self._shots[list(self._shots.keys())[key]]
+            # del self._shots[list(self._shots.keys())[key]]
 
             if cur_posession is not None:
                 shot_points = ((cur_posession._pressure/100)+2)
@@ -326,7 +374,10 @@ class Game(object):
             else:
                 # print(time_data.keys())
                 time_data[shot_event._shooter._id]["points"]+=shot_points                       # points for a shot
-                time_data[shot_event._shooter._id]["shots"]+=1                                  # increments number of shots
+                if shot_event._miss:
+                    time_data[shot_event._shooter._id]["shot_attempts"]+=1
+                else:
+                    time_data[shot_event._shooter._id]["shots"]+=1                                  # increments number of shots
                 if cur_posession is not None:
                     for presser in cur_posession._pressers:
                         time_data[presser._id]["points"]-=((cur_posession._pressure/100)+1)          # punish if presser lets player get shot off
@@ -340,14 +391,16 @@ class Game(object):
                                     "player_last_name":player._last_name,
                                     "X": 0,
                                     "Y": 0,
+                                    "goals":0,
                                     "hits": 0,
                                     "passes": 0,
                                     "shots": 0,
+                                    "shot_attempts": 0,
                                     "blocks": 0,
                                     "let_shot_off": 0,
                                     "pass_plus_minus": 0,
-                                    "turnover": False,
-                                    "possession":False,
+                                    "turnover": 0,
+                                    "possession":0,
                                     "points": 0}
         return time_data
 
@@ -392,7 +445,7 @@ class Game(object):
         NOTE: home attacks right in first period
         '''
 
-        if my_team == '14':             #NOTE: TAMPA IS 14 ----> ASSUMPTION BECAUSE THEY DIDN'T SWITCH SIDES
+        if my_team == '14':             #NOTE: TAMPA IS 14 ----> ASSUMPTION BECAUSE THEY DIDN'T SWITCH SIDES BETWEEN GAMES
             if period%2 == 1:
                 attacking = 'LeftGoal'
             else:
@@ -407,7 +460,7 @@ class Game(object):
             if self._rink._zones[z]._name == attacking:
                 x_mean = (self._rink._zones[z]._sx + self._rink._zones[z]._ex) / 2
                 y_mean = (self._rink._zones[z]._sy + self._rink._zones[z]._ey) / 2
-                return {"X": x_mean, "Y": y_mean}
+                return {"X": x_mean, "Y": y_mean}, attacking
 
 
     def getOpponentsOnIce(self, my_team,cur_time,mode=None):
@@ -456,6 +509,290 @@ class Game(object):
                 pass
         return teammates_on_ice
 
+    def updateMomentumData(self, gameSecond, cur_posession):
+        for i, team_id in enumerate(gameSecond._stats):
+            for j, event in enumerate(self._momentum_data[team_id].keys()):
+                # if event != 'turnover' or event != "possession":
+                # attacking_zone = isAttackingZone(gameSecond._time, cur_posession)
+                # if attacking_zone:
+                #     zone_multiplier = 2
+                # else:
+                #     zone_multiplier = 1
+                self._momentum_data[team_id][event].append(gameSecond._stats[team_id][event])
+                # else:
+                #     attacking_zone = isAttackingZone(gameSecond._time)
+                #     self._momentum_data[team_id][event] = any(gameSecond._stats[team_id][event][0])
+
+    def isAttackingZone(self, t, event, player):
+        ''' works with updateMomentumData to determine if puck is in attacking zone '''
+
+        time_key = np.argmin(np.abs(np.array(list(self._entities["1"]._hd_UTC_update.keys())) - t))
+        puck_loc = [self._entities["1"]._hd_UTC_update[list(self._entities["1"]._hd_UTC_update)[time_key]]["X"],
+                    self._entities["1"]._hd_UTC_update[list(self._entities["1"]._hd_UTC_update)[time_key]]["Y"]]
+        zone = self.getPuckZone(puck_loc)
+
+        # if cur_posession is not None:
+        _, attacking_net_name = self.getAttackingNet(player._team, event._period)
+        if attacking_net_name[:4] == zone[:4]:
+            return "offensive"               # NOTE: THIS IS USED FOR OFFENSIVE ZONE PRESSURE
+        elif zone[0] != 'N': #defensive zone
+            return "defensive"
+        return "neutral"
+
+    def getPuckZone(self, puck_loc):
+        ''' this returns the name of the zone that the puck is in...
+        more calculations are going to need to be done in calculateMomentum to determine
+        the offensive/defensive team '''
+
+        zoi = ["NeutralZone", "LeftOffensiveZone", "RightOffensiveZone"]
+        for zone_key in self._rink._zones:
+            zone = self._rink._zones[zone_key]
+            if puck_loc[0] > zone._sx and puck_loc[1] > zone._sy and puck_loc[0] <= zone._ex and puck_loc[1] <= zone._ey:
+                if zone._name in zoi:
+                    return zone._name
+        return None
+
+
+    def calculateMomentum(self, elapsed_seconds, t, cur_posession):
+        window = 30
+        scalar = 1
+
+
+        # if elapsed_seconds%(20*60) > window:
+        #     start = elapsed_seconds - window
+        # else:
+        #     start = ((elapsed_seconds//(20*60))*(20*60))
+        #
+        # end = elapsed_seconds + 1
+
+
+        self._momentum[elapsed_seconds] = {'14':0, '25':0}
+
+
+        # home_strength = self._scoreboard[t]["HomeStrength"]
+        # visitor_strength = self._scoreboard[t]["VisitorStrength"]
+
+        team_momentums = []
+        for i, team_id in enumerate(list(self._momentum[elapsed_seconds].keys())):
+            goals = np.sum(np.array(self._momentum_data[team_id]["goals"][-window:]))
+            hits = np.sum(np.array(self._momentum_data[team_id]["hits"][-window:]))
+            passes = np.sum(np.array(self._momentum_data[team_id]["passes"][-window:]))
+            pass_plus_minus = np.sum(np.array(self._momentum_data[team_id]["pass_plus_minus"][-window:]))
+            blocks = np.sum(np.array(self._momentum_data[team_id]["blocks"][-window:]))
+            shots = np.sum(np.array(self._momentum_data[team_id]["shots"][-window:]))
+            shot_attempts = np.sum(np.array(self._momentum_data[team_id]["shot_attempts"][-window:]))
+            turnover = np.sum(np.array(self._momentum_data[team_id]["turnover"][-window:]))
+            possession = np.sum(np.array(self._momentum_data[team_id]["possession"][-window:]))
+
+            # if team_id == '14':
+            #     print("possession: ", possession, ", passes: ", passes, " shot_attempts: ", shot_attempts)
+
+
+            # print(possession, " - ", np.array(self._momentum_data[team_id]["possession"][start:end]))
+
+            # dave momentum
+            # team_momentums.append(((3*goals) + (0.75*hits) + (0.2*passes) +
+            #                 (pass_plus_minus) + (blocks) + (shots) +
+            #                 (-2*turnover) + (0.15*possession)) + scalar)
+
+            # alex momentum
+            team_momentums.append((0.75 *shots) +
+                                    (0.1 + shot_attempts) +
+                                    (0.05   *possession) +
+                                    (0.2   *pass_plus_minus) +
+                                    (0.6   *turnover) +
+                                    (0.4   *hits) +
+                                    (0.3 *blocks) +
+                                    (0.2 *passes) +
+                                    scalar)
+
+
+
+            # print(team_id, ": ", shots, " ", shot_attempts, " ", possession, " ", pass_plus_minus, " ", turnover, " ", hits, " ", blocks, " ", passes)
+
+            # self._momentum[elapsed_seconds][team_id] = team_momentum
+            # total_momentum+=team_momentum
+
+        # print()
+        team_momentums = softmax(np.array(team_momentums))
+        # print(team_momentums)
+        for i, team_id in enumerate(list(self._momentum[elapsed_seconds].keys())):
+            # self._momentum[elapsed_seconds][team_id] = np.exp(self._momentum[elapsed_seconds][team_id]) / np.exp(total_momentum)
+            self._momentum[elapsed_seconds][team_id] = team_momentums[i]
+
+    def getXTicks(self, y, event_name, clock, event_count, game_idx):
+        if event_name == 'Goal':
+            if event_count == 4:
+                y = y[-30:]
+            else:
+                y = y[-60:]
+        else:
+            if event_count == 1 and game_idx == 1:
+                y = y[60:203]
+            else:
+                # y = y[-240:]
+                y = y[60:]
+
+        y = np.array(y)
+
+        print("Y SHAPE: ", y.shape)
+
+        xticks = [y.shape[0]]
+        xtick_labels = [str(clock[0])+":"+str(clock[1]-30)]
+        if event_name == 'Goal': second_resolution = 10
+        else: second_resolution = 30
+        # =[right_min, right_sec]
+        last_mins = clock[0]
+        if event_name == 'Goal' and event_count == 4:
+            last_secs = clock[1] - 30
+            loop_len = y.shape[0]*2
+        else:
+            last_secs = clock[1]
+            loop_len = y.shape[0]
+
+        for x in range(loop_len,0,-1):
+            if x%second_resolution == 0 and x != y.shape[0]:
+                if last_secs + (second_resolution) > 59:
+                    last_mins = last_mins+1
+                    last_secs = (last_secs + second_resolution)-60
+                    # xtick_labels.append(str(last_mins)+":"+str(last_secs))
+                else:
+                    last_secs = last_secs + second_resolution
+                xtick_labels.append(str(last_mins)+":"+str(last_secs))
+                # xtick_labels.append(str(x))
+                xticks.append(x)
+
+        return y, xticks, xtick_labels
+
+    def plotMomentum(self, fname, event, event_count, clock, event_name='Goal', game_idx=0):
+        y = []
+
+        for key, val in enumerate(self._momentum.keys()):
+            y.append(self._momentum[val]['14'])
+
+        fig, ax1 = plt.subplots(1,1, figsize=(15,6))
+        # y = np.array(y)[-60:]
+        # y = np.array(y)[-120:]
+
+
+        y, xticks, xtick_labels = self.getXTicks(y, event_name, clock, event_count, game_idx)
+        ax1.set_xlabel("Game Clock", fontsize=25)
+
+
+        print("yshape: ", y.shape[0])
+
+        print("ticks: ", xticks)
+        print("lab: ", xtick_labels)
+
+        dal_mom, tbl_mom = [], []
+        for mom in y:
+            dal_mom.append(1-mom)
+            tbl_mom.append(mom)
+
+        # np.save(fname+"/momentum"+str(y.shape[0])+"sec.npy", y)
+        # y = np.load(fname)
+
+        ax1.fill_between(np.arange(y.shape[0]), y, 0,color='b', label='TBL Momentum')
+        ax1.fill_between(np.arange(y.shape[0]), y, 1,color='g', label='DAL Momentum')
+        # for tg in tampa_goals:
+        if event._teamId == '14':
+            if event_name == 'Goal':
+                ax1.axvline(y.shape[0]//2, c='k', linewidth=5, label='TBL '+event_name)
+                mom_percentage = round((np.mean(np.array(tbl_mom[30:])) * 100),1)
+                mom_percentage_before = round((np.mean(np.array(tbl_mom[:30])) * 100),1)
+                team_name = "TBL"
+                if game_idx == 1 and event_count == 0:
+                    ax1.axvline(6, c='y', linewidth=5, linestyle="--", label='DAL Penalty')
+                    custom_lines = [Line2D([0], [0], linestyle="--", color='y', lw=8)]
+                    ax1.legend(custom_lines, ['DAL Penalty'], fontsize=17, framealpha=0.8, loc="upper left")
+            else:
+                ax1.axvline(60, c='k', linewidth=5, linestyle='--', label='TBL '+event_name) #y.shape[0]-1
+                # if y.shape[0] > 180:
+                    # ax1.axvline(180, c='k', linestyle=':', linewidth=5, label='Penalty Over')
+                if game_idx == 0 and event_count == 2:
+                    ax1.axvline(188, c='y', linewidth=5, label='DAL Goal')
+                    custom_lines = [Line2D([0], [0], color='y', lw=8)]
+                    ax1.legend(custom_lines, ['DAL Goal'], fontsize=17, framealpha=0.8, loc="upper left")
+                if game_idx == 1 and event_count == 3:
+                    ax1.axvline(139, c='y', linewidth=5, linestyle="--", label='DAL Penalty')
+                    custom_lines = [Line2D([0], [0], color='y', linestyle="--", lw=8)]
+                    ax1.legend(custom_lines, ['DAL Penalty'], fontsize=17, framealpha=0.8, loc="upper left")
+
+                if y.shape[0] > 180:
+                    ax1.axvline(180, c='k', linestyle=':', linewidth=5, label='Penalty Over')
+                mom_percentage = 100 - round((np.mean(np.array(tbl_mom[60:180])) * 100),1)
+                mom_percentage_before = 100 - round((np.mean(np.array(tbl_mom[:60])) * 100),1)
+                mom_percentage_last = 100 - round((np.mean(np.array(tbl_mom[180:])) * 100),1)
+                team_name = "DAL" #"Tampa Bay"
+        # for dg in dallas_goals:
+        else:
+            if event_name == 'Goal':
+                ax1.axvline(29, c='y', linewidth=5, label='DAL '+event_name)
+                mom_percentage = round((np.mean(np.array(dal_mom[30:])) * 100),1)
+                mom_percentage_before = round((np.mean(np.array(dal_mom[:30]))* 100),1)
+                team_name = "DAL"
+                if game_idx == 0 and event_count == 3:
+                    ax1.axvline(21, c='k', linewidth=5, linestyle=':', label='TBL Penalty Over')
+                    custom_lines = [Line2D([0], [0], color='k', linestyle=':', lw=8)]
+                    ax1.legend(custom_lines, ['TBL Penalty Over'], fontsize=17, framealpha=0.8, loc="upper left")
+            else:
+                ax1.axvline(60, c='y', linewidth=5, linestyle='--', label='DAL '+event_name)
+                mom_percentage = 100 - round((np.mean(np.array(dal_mom[60:180])) * 100),1)
+                mom_percentage_before = 100 - round((np.mean(np.array(dal_mom[:60])) * 100),1)
+                mom_percentage_last = 100 - round((np.mean(np.array(dal_mom[180:])) * 100),1)
+                team_name = "TBL" #"Dallas"
+                if game_idx == 1 and event_count == 1 and event_name == 'Penalty':
+                    ax1.axvline(84, c='k', linewidth=5, label='TBL Goal/Penalty Over')
+                    ax1.axvline(84, c='y', linewidth=5, linestyle=':', label='Penalty Over')
+                    # plt.legend(loc="upper left", fontsize=17, framealpha=0.8)
+                    mom_percentage = 100 - round((np.mean(np.array(dal_mom[60:84])) * 100),1)
+                    mom_percentage_last = 100 - round((np.mean(np.array(dal_mom[84:])) * 100),1)
+                    custom_lines = [Line2D([0], [0], color='k', lw=8),
+                                    Line2D([0], [0], color='y', linestyle=":", lw=8)]
+                    ax1.legend(custom_lines, ['TBL Goal', 'DAL Penalty Over'], fontsize=17, framealpha=0.8, loc="upper left")
+                elif game_idx == 1 and event_count == 4:
+                    ax1.axvline(99, c='k', linewidth=5, linestyle=":", label='TBL Penalty Over')
+                    custom_lines = [Line2D([0], [0], linestyle=":", color='k', lw=8)]
+                    ax1.legend(custom_lines, ['TBL Penalty Over'], fontsize=17, framealpha=0.8, loc="upper left")
+                    ax1.axvline(180, c='y', linestyle=':', linewidth=5, label='Penalty Over')
+                else:
+                    ax1.axvline(180, c='y', linestyle=':', linewidth=5, label='Penalty Over')
+
+        if (y.shape[0] < 235 and event_name == 'Penalty') or (y.shape[0] < 60 and event_name == 'Goal'):
+            ax1.axvline(y.shape[0]-0.5, c='r', linestyle='-', linewidth=5, label='End of Period')
+        # else:
+        if y.shape[0] > 180:
+            ax1.text(180,-0.08, team_name+": "+str(round(mom_percentage_last,1))+"%", fontsize=23, bbox={'facecolor':'w', 'alpha':0.9, 'pad':2})
+
+        ax1.set_ylabel("Momentum", fontsize=25)
+        ax1.set_xticks(xticks)
+        ax1.set_xticklabels(xtick_labels, fontsize=20)
+
+        if event_name == 'Goal':
+            ax1.text(0,-0.08, team_name+" Before Goal: "+str(round(mom_percentage_before,1))+"%", fontsize=23, bbox={'facecolor':'w', 'alpha':0.9, 'pad':2})
+            if event_count == 4:
+                ax1.text(29,-0.08, "Game Over", fontsize=23, bbox={'facecolor':'w', 'alpha':0.9, 'pad':2})
+            else:
+                ax1.text(30,-0.08, team_name+" After Goal: "+str(mom_percentage)+"%", fontsize=23, bbox={'facecolor':'w', 'alpha':0.9, 'pad':2})
+        else:
+            ax1.text(0,-0.08, team_name+": "+str(round(mom_percentage_before,1))+"%", fontsize=23, bbox={'facecolor':'w', 'alpha':0.9, 'pad':2})
+            ax1.text(60,-0.08, team_name+" PP: "+str(round(mom_percentage,1))+"%", fontsize=23, bbox={'facecolor':'w', 'alpha':0.9, 'pad':2})
+
+
+        plt.title("Game: "+str(game_idx+5)+", "+self._teams[event._teamId]._full_name+" "+event_name+", Period:   , Clock: "+str(event._clock_minutes)+":"+str(event._clock_seconds), fontsize=25)
+        # plt.legend(loc="upper left", fontsize=17, framealpha=0.8)
+        plt.yticks(fontsize=20)
+        plt.ylim(bottom=-0.12)
+        if event_name == 'Goal': fname = "../../Paper/paper_imgs/momentum/GOAL-30sec-30sec_"+self._gameId+str(event._clock_minutes)+"-"+str(event._clock_seconds)+event_name+str(event_count) #event._scorer._last_name+
+        else: fname = "../../Paper/paper_imgs/momentum/PP-1-2-1mins_sec_"+self._gameId+str(event._clock_minutes)+"-"+str(event._clock_seconds)+event_name+str(event_count) #event._scorer._last_name+
+
+        print(fname)
+        plt.savefig(fname,bbox_inches='tight', dpi=300)
+        plt.close()
+
+
+        # plt.show()
+        # exit()
 
 
     def __repr__(self):
@@ -535,11 +872,16 @@ def getRink(fname):
     zones = data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Sections"]
     for i in zones:
         name = i["Name"]
+        if name in ['RightSubstitutionArea', 'LeftSubstitutionArea', 'LeftPenaltyBox', 'RightPenaltyBox', 'LeftBench', 'RightBench']: continue
+        # print(name)
         sx = i["Rectangle"]["SX"]
         sy = i["Rectangle"]["SY"]
         x_len = i["Rectangle"]["EX"] - sx
         y_len = i["Rectangle"]["EY"] - sy
         ax.add_patch(Rectangle((sx,sy),x_len,y_len, ec='k', lw=2,fill=False)) #np.random.rand(3,) ,label=name
+        if name == 'RightGoal' or name == 'RightCrease': ax.add_patch(Rectangle((sx,sy),x_len,y_len, ec='k', lw=2,fill=True, facecolor='b', label="Tampa Bay Goal"))
+        elif name == 'LeftGoal' or name == 'LeftCrease': ax.add_patch(Rectangle((sx,sy),x_len,y_len, ec='k', lw=2,fill=True, facecolor='g', label="Dallas Goal"))
+    # exit()
 
 
     # print(data[0]["PlayingSurface"]["PlayingSurfaceInfo"]["Sections"][0]["Rectangle"])
@@ -547,9 +889,14 @@ def getRink(fname):
 
 
     ax.add_patch(Rectangle((rink_sx,rink_sy),rink_x_len,rink_y_len, ec='k', lw=2,fill=False,label="Rink"))
-    plt.xlim(left=-110, right=160)
-    plt.ylim(bottom=-55, top=55)
-    plt.axvline(0,ymin=0.12, ymax=0.88, c='r')
+    plt.xlim(left=-110, right=110) #160
+    plt.ylim(bottom=-45, top=45) #was 55
+    # plt.axvline(0,ymin=0.12, ymax=0.88, c='r')
+    plt.axvline(0,ymin=0.03, ymax=0.97, c='r')
+    ax.text(101,-38, "Tampa Bay Defensive Zone", rotation=-90, fontsize=18)
+    ax.text(-106,-33, "Dallas Defensive Zone", rotation=90, fontsize=18)
+    # plt.show()
+    # exit()
     # plt.legend()
     return fig, ax
     # plt.show()

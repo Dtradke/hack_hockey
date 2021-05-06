@@ -6,11 +6,16 @@ import pickle
 import os
 import math
 import time
+import copy
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib import rcParams, cycler
 
 import player_factory
 import rink
 import event
 import print_to_terminal
+import paper_plots
 
 
 # STATS TO TRACK:
@@ -108,13 +113,16 @@ def getPosessions(fname, game):
             # print(t["Marker"]["MarkerData"][0]["Descriptor_"])
             # possession_event = event.Possession(game, start_time, t["Marker"]["MarkerData"][0]['Descriptor_'], t["Marker"]["MarkerData"])
 
-
+    last_period = -1
     for i in range(len(possession_changes)-1):
         if len(possession_changes[i]["Marker"]["MarkerData"][0]["Participants"]) > 0 and possession_changes[i]["Marker"]["MarkerData"][0]["Participants"][0]["EntityId"] != '':
             posession = event.Posession(game, possession_changes[i], possession_changes[i+1])
             game._teams[posession._posessor._team]._posessions.append(posession)
             game._entities[posession._posessor._id]._posession_lst.append(posession)
             game._posessions[round(posession._UTC_start,1)] = posession
+            if posession._period != last_period:
+                print("Possessions in Period: ", posession._period)
+                last_period = posession._period
 
     return game
 
@@ -163,6 +171,18 @@ def getShots(fname, game):
         # if count == 100: exit()
         if event_type == "EventShot":
 
+
+            # if int(t["Marker"]["MarkerData"][0]['ETime']['ClockMinutes']) == 7 and int(t["Marker"]["MarkerData"][0]['ETime']['ClockSeconds']) == 37:
+            #     participants = t["Marker"]["MarkerData"][0]["Participants"]
+            #     shooter = None
+            #     for i in participants:
+            #         if i['Role'] == 'MapRoleShooter':
+            #             shooter = game._entities[i["EntityId"]]
+            #     if shooter is not None:
+            #         print(">Shot: ", t["Marker"]["MarkerData"][0]['ETime']['ClockMinutes'], ":",t["Marker"]["MarkerData"][0]['ETime']['ClockSeconds'], " > ", shooter)
+
+
+
             participants = t["Marker"]["MarkerData"][0]["Participants"]
             shooter_bool = False
             for i in participants:
@@ -198,6 +218,7 @@ def getShots(fname, game):
 
             shot._shooter._pressure_to_shoot.append(shot._shot_pressure)
 
+
     # print(game._shots)
     # print("shots: ", len(game._shots.keys()))
 
@@ -217,6 +238,25 @@ def getScoreBoard(fname, game):
                                     "HomeStrength": t["Scoreboard"]["PowerPlayInfo"]["HomeStrength"],
                                     "VisitorStrength": t["Scoreboard"]["PowerPlayInfo"]["VisitorStrength"]}
 
+    return game
+
+
+def getGoals(fname, game):
+    ''' gets the goals of the game '''
+    print("Loading Goals...")
+
+    with open(fname+'Marker.json') as f:
+        data = json.load(f)
+
+    faceoffs = []
+    for t in data:
+        time = t["PacketSendUTC"]
+        event_type = t["Marker"]["MarkerData"][0]["MinorType"]
+        if event_type == "EventGoal":
+            # print(">>>>> GOAL", t)
+            goal = event.Goal(game, time, t)
+            game._goals[round(goal._UTC_update,1)] = goal
+    # exit()
     return game
 
 def getFaceOffs(fname, game):
@@ -243,20 +283,91 @@ def getPasses(fname, game):
     with open(fname+'Marker.json') as f:
         data = json.load(f)
 
+    speeds = []
+    dists = []
+
+    events = []
+
+    last_period = -1
     passes = []
     for t in data:
         time = t["PacketSendUTC"]
         event_type = t["Marker"]["MarkerData"][0]["MinorType"]
+        # if event_type not in events:
+        #     events.append(event_type)
         if event_type == "EventPass":
+        #     print(t["Marker"]["MarkerData"][0]["Descriptor_"], " turnover:", t["Marker"]["MarkerData"][0]["Properties"][0]['TurnoverType'])
             pass_event = event.Pass(game, time, t["Marker"]["MarkerData"][0]['Descriptor_'], t["Marker"]["MarkerData"])
             game._passes[round(pass_event._UTC_update,1)] = pass_event
+            if pass_event._period != last_period:
+                print("Passes in Period: ", pass_event._period)
+                last_period = pass_event._period
 
-    # print(len(passes))
-    # for e in game._entities.keys():
-    #     print(game._entities[e])
-    # exit()
+    # speeds = np.array(speeds)
+    # dists = np.array(dists)
+    #
+    # plt.plot(speeds, dists, 'o')
+    # plt.xlabel("Speed (ft/0.1s)",fontsize=18)
+    # plt.ylabel("Distance (ft)",fontsize=18)
+    # plt.xticks(fontsize=16)
+    # plt.yticks(fontsize=16)
+    #
+    # m, b = np.polyfit(speeds, dists, 1)
+    # plt.plot(speeds, m*speeds + b)
+    # plt.show()
+
+
+    # for e in events:
+    #     print(e)
+
 
     return game
+
+
+def getTakeAways(fname, game):
+    ''' This gets takeaways events in the game
+    '''
+    print("Loading TakeAways...")
+    with open(fname+'Marker.json') as f:
+        data = json.load(f)
+
+    turnovers = []
+    for t in data:
+        time = t["PacketSendUTC"]
+        event_type = t["Marker"]["MarkerData"][0]["MinorType"]
+        if event_type == "EventTurnover":
+            to_type = t["Marker"]["MarkerData"][0]["Properties"][0]['TurnoverType']
+            if to_type == 'TurnoverTypeTakeaway':
+                takeaway_event = event.TakeAway(game, time, t["Marker"]["MarkerData"][0]['Descriptor_'], t["Marker"]["MarkerData"])
+                game._takeaways[round(takeaway_event._UTC_update,1)] = takeaway_event
+    return game
+
+def getDistanceChange(player, time):
+    arg_key = np.argmin(np.abs(np.array(list(player._hd_UTC_update.keys())) - time))
+    key = list(player._hd_UTC_update.keys())[arg_key]
+
+    time_key = round(key,1)
+    time_key_p1 = round(list(player._hd_UTC_update.keys())[arg_key+1],1)
+    time_diff = time_key_p1 - time_key
+    puck_t0 =  {"X": player._hd_UTC_update[time_key]["X"], "Y": player._hd_UTC_update[time_key]["Y"]} #info_participants[0]["Participants"][1]["Location"]
+    puck_t1 =  {"X": player._hd_UTC_update[time_key_p1]["X"], "Y": player._hd_UTC_update[time_key_p1]["Y"]}
+    dist = event.euclideanDistance(puck_t0["X"], puck_t0["Y"], puck_t1["X"], puck_t1["Y"])
+    dist = dist / (10*time_diff)
+    player._speeds.append(dist)
+    return dist
+
+def getSpeeds(game):
+    for e in list(game._entities.keys()):
+        if (game._entities[e]._team == '14' or game._entities[e]._team == '25') and game._entities[e]._pos == 'G':
+            print(game._entities[e])
+            for shift in game._entities[e]._shifts:
+                start = shift['start']
+                end = shift['end']
+                while start < end:
+                    dist = getDistanceChange(start, end)
+                    print(dist)
+                    exit()
+                    start+=0.1
 
 
 def getEventSummary(fname, entities, game):
@@ -278,12 +389,259 @@ def getEventSummary(fname, entities, game):
                 game._entities[ent["EntityId"]]._locX.append(ent["Location"]["X"])
                 game._entities[ent["EntityId"]]._locY.append(ent["Location"]["Y"])
                 game._entities[ent["EntityId"]]._locZ.append(ent["Location"]["Z"])
+                game._entities[ent["EntityId"]]._time_on_ice = ent['TimeOnTotal']
+
         # if pos:
             # game.graphGame()
         #     exit()
 
     # game.graphGame()
     return game
+
+def getStartTime(clock_time, mins):
+    ''' takes in a clock time of a goal/penalty and returns time idx of mins minutes before '''
+
+    start_time_arr = clock_time.split("-")
+
+    if (int(start_time_arr[1])+mins) >= 20:
+        return start_time_arr[0] + "-20-0"
+    elif (int(start_time_arr[1])+mins) < 0:
+        return start_time_arr[0] + "-0-0"
+    else:
+        return start_time_arr[0] + "-" + str(int(start_time_arr[1])+mins) + "-" + start_time_arr[2]
+
+def getTimeDicts(game, time_arr):
+    # id_ch = {v: k for k, v in ch_id.items()}
+    clock_ids = {}
+    period = 1
+    for i, t in enumerate(time_arr):
+        if i > 1:
+            if game._scoreboard[t]["ClockMinutes"] > game._scoreboard[time_arr[i-1]]["ClockMinutes"]:
+                period+=1
+        # print("Period: ", period, " CLOCK: ", game._scoreboard[t]["ClockMinutes"], ":",game._scoreboard[t]["ClockSeconds"])
+        key = str(period) + "-" + str(game._scoreboard[t]["ClockMinutes"]) + "-" + str(game._scoreboard[t]["ClockSeconds"])
+        if key not in clock_ids.keys():
+            clock_ids[key] = t
+    ids_clock = {v: k for k, v in clock_ids.items()}
+    return ids_clock, clock_ids
+
+def getPenalties(game, time_arr):
+    penalties = {}
+    for t_count, t in enumerate(time_arr):
+        # home penalty
+        if game._scoreboard[t]["HomeStrength"] < game._scoreboard[time_arr[t_count-1]]["HomeStrength"]:
+            penalties[t] = event.Penalty(game, game._scoreboard[t], game._home_team_num)
+        # away penalty
+        elif game._scoreboard[t]["VisitorStrength"] < game._scoreboard[time_arr[t_count-1]]["VisitorStrength"]:
+            penalties[t] = event.Penalty(game, game._scoreboard[t], game._visitor_team_num)
+    return penalties
+
+def getMomentum(games, fnames, game_idx):
+    ''' calculates the momentum of the game '''
+
+    game = games[game_idx]
+
+
+    all_players_init = {}
+    # scoreboard = {}
+    for i, val in enumerate(list(game._entities.keys())):
+        if val != '1':
+            all_players_init[game._entities[val]._id] = {
+                                        "player_team":game._teams[game._entities[val]._team]._full_name,
+                                        "player_number":game._entities[val]._number,
+                                        "player_last_name":game._entities[val]._last_name,
+                                        "X": 0,
+                                        "Y": 0,
+                                        "goals": 0,
+                                        "hits": 0,
+                                        "passes": 0,
+                                        "shots": 0,
+                                        "blocks": 0,
+                                        "let_shot_off": 0,
+                                        "pass_plus_minus": 0,
+                                        "turnover": 0,
+                                        "possession":0,
+                                        "points": 0}
+
+    game._game_stats[0] = all_players_init # initialize all of the players to 0 values at the start
+    game._momentum_data_empty = {"14":{"goals":[],
+                                "hits":[],
+                                "passes":[],
+                                "pass_plus_minus":[],
+                                "blocks":[],
+                                "shots":[],
+                                "shot_attempts": [],
+                                "turnover":[],
+                                "possession":[]},
+                            "25":{"goals":[],
+                                "hits":[],
+                                "passes":[],
+                                "pass_plus_minus":[],
+                                "blocks":[],
+                                "shots":[],
+                                "shot_attempts": [],
+                                "turnover":[],
+                                "possession":[]}}
+
+    game._momentum_data = copy.deepcopy(game._momentum_data_empty)
+
+
+    # period = 0
+    time_arr = np.sort(np.array(list(game._scoreboard.keys()))) #list(game._entities['1']._hd_UTC_update)
+    ids_clock, clock_ids = getTimeDicts(game, time_arr)
+
+    # --- set event
+    penalties = getPenalties(game, time_arr)
+    events = penalties #game._goals #penalties
+    event_keys = np.sort(np.array(list(events.keys())))
+    time_diff = -2 # penalty = -2, goal = 2
+
+    # print(">>>EVENTS: ", events)
+
+    for event_count, e in enumerate(event_keys):
+        clock = 1
+        gameSecond = None
+        game_seconds = 0
+        tampa_goals, dallas_goals = [], []
+        possession_change = False
+        cur_posession = None
+
+
+        game._momentum = {}
+
+        ''' Filter which charts I want to make '''
+        if event_count == 4:
+            event_oi = events[e]
+            print(">>> Event: ", event_oi)
+            key = np.argmin(np.absolute(np.array(list(ids_clock.keys())) - e))
+            clock_time = ids_clock[list(ids_clock.keys())[key]]
+            range_time = getStartTime(clock_time, mins=time_diff)
+
+            # ----- goal
+            # right_min = event_oi._clock_minutes
+            # right_sec = event_oi._clock_seconds
+            #
+            # # -- run for 30 seconds after goal
+            # # if right_sec - 30 < 0:
+            # #     right_sec = 60 + (right_sec - 30)
+            # #     right_min-=1
+            # # else:
+            # #     right_sec = right_sec - 30
+            #
+            # clock_time = range_time
+            # event_name_str = 'Goal'
+            # print(range_time, " --> ", right_min, ":", right_sec)
+
+            # ----- Penalty
+            right_min = int(range_time.split("-")[1]) - 1
+            right_sec = int(range_time.split("-")[2])
+            if right_min < 0:
+                right_min = 0
+                right_sec = 0
+            # clock_time = clock_time[:-1] + str(int(clock_time[-1])-1)
+            clock_time = getStartTime(clock_time, mins=2)
+            event_name_str = 'Penalty'
+            print(clock_time, " --> ", right_min, ":", right_sec)
+            # print(event_count)
+            # exit()
+
+
+
+
+            for counter, t in enumerate(time_arr):
+                # if t > clock_ids[start_time]:
+                if t > clock_ids[clock_time]:
+
+                    # game.plotMomentum(fnames[game_idx], event_oi, event_count, event_name=event_name_str, game_idx=game_idx)
+                    # exit()
+
+                    if np.amin(np.absolute(np.array(list(game._posessions.keys())) - t)) <= 0.1:
+                        key_idx = np.argmin(np.absolute(np.array(list(game._posessions.keys())) - t))
+                        cur_posession = game._posessions[list(game._posessions.keys())[key_idx]]
+
+                    if cur_posession is not None:
+                        if np.amin(np.absolute(cur_posession._UTC_end - t)) == 0.0:
+                            possession_change = cur_posession._turnover
+                        if t > cur_posession._UTC_end:
+                            cur_posession = None
+                            possession_change = False
+                    else:
+                        possession_change = False
+
+                    # if game._scoreboard[t]["ClockState"] == "ClockStateRunning":
+                    time_data, cur_posession = game.runGameSynchonusOffline(t, cur_posession, possession_change)
+
+                    game._game_stats[t] = time_data
+
+                    # new_clock = (period*(20*60)) + ((20*60) - (60*game._scoreboard[t]["ClockMinutes"]) - game._scoreboard[t]["ClockSeconds"])
+                    new_clock = (game._scoreboard[t]["Period"]*(20*60)) + (60*game._scoreboard[t]["ClockMinutes"]) + (60-game._scoreboard[t]["ClockSeconds"])
+
+                    # print(clock, " -- ", new_clock, " ", game._scoreboard[t]["ClockMinutes"], ":", game._scoreboard[t]["ClockSeconds"], " t: ", t)
+                    if gameSecond == None:
+                        gameSecond = event.GameSecond(0, game, t) #new_clock
+                        game_seconds+=1
+                    if new_clock == clock:
+                        gameSecond.updateSecond(t)
+                    else:
+                        game_seconds+=1
+                        game.updateMomentumData(gameSecond, cur_posession)
+
+
+                        # try:
+                        #     tbl_mom = game._momentum[list(game._momentum.keys())[-1]]['14']
+                        # except:
+                        #     tbl_mom = 0
+                        # print(int(game._scoreboard[t]["ClockMinutes"]), " : ", int(game._scoreboard[t]["ClockSeconds"]), " rightmin: ", int(right_min), " right_sec: ", int(right_sec),
+                                # " ", int(game._scoreboard[t]["ClockMinutes"]) == int(right_min), " ", int(game._scoreboard[t]["ClockSeconds"]) == int(right_sec), " TBL: ", tbl_mom)
+                        # print(gameSecond)
+                        # print(int(game._scoreboard[t]["ClockMinutes"]), " : ", int(game._scoreboard[t]["ClockSeconds"]), " elapsed: ", gameSecond._elapsed_seconds, " TBL: ", round(tbl_mom, 3), " // pos: ", gameSecond._stats['14']['possession'], " passes: ", gameSecond._stats['14']['passes'])
+
+                        # if gameSecond._stats['14']["goals"] > 0:
+                        #     tampa_goals.append(gameSecond._elapsed_seconds)
+                        # elif gameSecond._stats['25']["goals"] > 0:
+                        #     dallas_goals.append(gameSecond._elapsed_seconds)
+
+
+                        # if game_seconds%(20*60) == 1 and game_seconds > 1: #gameSecond._elapsed_seconds%(20*60)==0 and gameSecond._elapsed_seconds!=0:
+                        # if game._scoreboard[t]["ClockMinutes"] > game._scoreboard[time_arr[count-1]]["ClockMinutes"]:
+                        if int(game._scoreboard[t]["ClockMinutes"]) == int(right_min) and int(game._scoreboard[t]["ClockSeconds"]) == int(right_sec):
+                            # period+=1
+                            # print("Timestep: ", counter, " of ", len(time_arr),
+                            #                             "Period: ", period, #game._scoreboard[t]["Period"],
+                            #                             " Time: ", game._scoreboard[t]["ClockMinutes"], ":",
+                            #                             game._scoreboard[t]["ClockSeconds"], " t: ", t)
+                            print(gameSecond)
+                            # print(period)
+                            print("clock: ", clock)
+                            print("new clock: ", new_clock)
+                            game.plotMomentum(fnames[game_idx], event_oi, event_count, clock=[right_min, right_sec], event_name=event_name_str, game_idx=game_idx)
+
+
+                            game._momentum_data = copy.deepcopy(game._momentum_data_empty)
+                            break
+
+                        game.calculateMomentum(gameSecond._elapsed_seconds, t, cur_posession)
+                        gameSecond = event.GameSecond(game_seconds, game, t) #new_clock
+                        clock = new_clock
+
+
+        # clock_seconds = game.updateMomentum(t) #_momentum_data[str(game._scoreboard["Period"])+"-"+game._scoreboard["ClockMinutes"]+":"+game._scoreboard["ClockSeconds"]]
+        # print(clock_seconds)
+        # if counter == 10: exit()
+    return
+    # exit()
+    # game_fname = fname+'game/'+str(game._gameId)+".pkl"
+    # with open(game_fname, 'wb') as output:
+    #     pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
+    # print("Game Saved after loading timesteps")
+    # game.plotMomentum(fnames[game_idx], tampa_goals, dallas_goals)
+    # game_fname = fnames[game_idx]+'game/'+str(game._gameId)+"_"+str(gameSecond._elapsed_seconds)+".pkl"
+    # with open(game_fname, 'wb') as output:
+    #     pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
+    # print("Final game Saved after ", gameSecond._elapsed_seconds, " Seconds...")
+
+
+
 
 def playGame(fname, game): #time is the time_key for the game
     ''' plays the game synchonously '''
@@ -345,57 +703,12 @@ def playGame(fname, game): #time is the time_key for the game
             time_data, cur_posession = game.runGameSynchonusOffline(t, cur_posession, possession_change)
             game._game_stats[t] = time_data
 
-    game_fname = fname+'game/'+str(game._gameId)+".pkl"
-    with open(game_fname, 'wb') as output:
-        pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
-    print("Game Saved after loading timesteps")
-            # updated = False
-    # for k in list(time_data.keys()):
-    #     if time_data[k]["points"] > 0:
-    #         updated = True
-    #         if k in list(home_results["ID"]):
-    #             # print("last home: ", home_results.loc[home_results["ID"]==k, ["Points"]])
-    #             home_results.loc[home_results["ID"]==k, ["Points"]]+=time_data[k]["points"]
-    #         else:
-    #             # print("last away: ", away_results.loc[away_results["ID"]==k, ["Points"]])
-    #             away_results.loc[away_results["ID"]==k, ["Points"]] += time_data[k]["points"]
-    # # if counter%500 == 0:
-    #     print()
-    #     print("UPDATED: ", counter)
-    #     print(home_results)
-    #     print("**************")
-    #     print(away_results)
-
-                    # if time_data[k]["player_last_name"] == "McDonagh":
-                    #     print(time_data[k])
-                # time.sleep(1)
+    # game_fname = fname+'game/'+str(game._gameId)+".pkl"
+    # with open(game_fname, 'wb') as output:
+    #     pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
+    # print("Game Saved after loading timesteps")
 
     return game
-
-        # print(time_data)
-
-        # updated = False
-        # for k in list(time_data.keys()):
-        #     if time_data[k]["points"] > 0:
-        #         updated = True
-        #         if k in list(home_results["ID"]):
-        #             print("last home: ", home_results.loc[home_results["ID"]==k, ["Points"]])
-        #             home_results.loc[home_results["ID"]==k, ["Points"]]+=time_data[k]["points"]
-        #         else:
-        #             print("last away: ", away_results.loc[away_results["ID"]==k, ["Points"]])
-        #             away_results.loc[away_results["ID"]==k, ["Points"]] += time_data[k]["points"]
-        # if updated:
-        #     print()
-        #     print("UPDATED")
-        #     print(home_results)
-        #     print("**************")
-        #     print(away_results)
-
-            #     if time_data[k]["player_last_name"] == "McDonagh":
-            #         print(time_data[k])
-            # time.sleep(1)
-
-    # return time_data, cur_posession
 
 
 def assignMovement(fname, entities):
@@ -450,8 +763,9 @@ def initGame(fname,loadplayers=False, loadgame=False):
         # print("Loading game")
         game_fnames = os.listdir(fname+"game/")
         for game_fname in game_fnames:
-            if game_fname[-8:] != 'Game.pkl':
-                print("Loading game: ", fname+"/game/"+game_fname)
+            # if game_fname[-8:] != 'Game.pkl':
+            if game_fname[-7:-5] == '41': #'415.pkl'
+                # print("Loading game: ", fname+"/game/"+game_fname)
                 game = rink.loadGame(fname+"/game/"+game_fname)
         return game
     else:
@@ -467,6 +781,7 @@ def initGame(fname,loadplayers=False, loadgame=False):
 
             # print("Saving")
             for i in list(entities.keys()):
+                # entities[i].getShifts(rink_obj)
                 entities[i].savePlayer(fname)
         else:
             print("Loading Entities...")
@@ -484,6 +799,9 @@ def initGame(fname,loadplayers=False, loadgame=False):
         # SCOREBOARD
         game = getScoreBoard(fname, game)
 
+        # GOALS
+        game = getGoals(fname, game)
+
         # FACEOFFS
         game = getFaceOffs(fname, game)
 
@@ -499,22 +817,100 @@ def initGame(fname,loadplayers=False, loadgame=False):
 
         # POSESSION/PRESSURE
         game = getPosessions(fname, game)
-        print_to_terminal.rankPosessionData(game)
-        exit()
 
-        game_fname = fname+'game/'+str(game._gameId)+"_beforeGame.pkl"
+        game = getTakeAways(fname, game)
+
+        game_fname = fname+'game/'+str(game._gameId)+".pkl"
         with open(game_fname, 'wb') as output:
             pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
         print("Game Saved")
 
-
-        # exit()
-
     return game #playGame(game)
 
 
+def SOGonly(game):
+    ''' limit shots to those "on goal" '''
+
+    for e in game._entities.keys():
+        game._entities[e]._pressure_to_shoot = []
+        game._entities[e]._pressure_on_shooter = []
+
+    sog = {}
+    for p in game._shots.keys():
+        if not game._shots[p]._blocked and not game._shots[p]._miss:
+            sog[p] = game._shots[p]
+            game._shots[p]._shooter._pressure_to_shoot.append(game._shots[p]._shot_pressure)
+            for presser_id in game._shots[p]._shot_presser_lst.keys():
+                game._entities[presser_id]._pressure_on_shooter.append(game._shots[p]._shot_presser_lst[presser_id])
+    game._shots = sog
+    return game
+
+
+
+
+
+def recalculatePasses(games, fnames):
+
+    for g in games:
+        for pl in g._entities.keys():
+            g._entities[pl].resetPasses()
+
+    risk = []
+    for game_num, g in enumerate(games):
+        for p in g._passes.keys():
+            g._passes[p].resetPass()
+            g._passes[p].beatOpponents()
+            g._entities[g._passes[p]._passer._id]._pass_risk.append(g._passes[p]._pass_risk)
+
+
+        game_fname = fnames[game_num]+'game/'+str(g._gameId)+".pkl"
+        with open(game_fname, 'wb') as output:
+            pickle.dump(g, output, pickle.HIGHEST_PROTOCOL)
+        print("Game Saved")
+
+
+fnames = ['../../2019030415/', '../../2019030416/']
+# fnames = ['../../2019030415/']
+
 if __name__=="__main__":
-    game = initGame(fname='../../../2019030415/', loadgame=False)
-    print_to_terminal.rankPosessionData(game)
-    exit()
-    playGame(fname='../../../2019030415/', game=game)
+
+    games = []
+    for f_count, f in enumerate(fnames):
+        g = initGame(fname=f, loadgame=True)
+
+        if f_count == 1:
+            # adding goal to second game because of shitty data
+            for s in g._shots.keys():
+                if g._shots[s]._period == 1 and g._shots[s]._clock_minutes == 7 and g._shots[s]._clock_seconds == 39:
+                    g._goals[s] = event.Goal(g, s, [], s, g._shots[s]._period, g._shots[s]._clock_minutes, g._shots[s]._clock_seconds, g._shots[s]._shooter, g._shots[s]._shooter)
+            # print(g._goals)
+
+        # g.cleanPossessions()
+        # g = SOGonly(g)
+        games.append(g)
+
+
+
+    # exit()
+    # for game_num in range(2):
+    #     getMomentum(games, fnames, game_num)
+    #     exit()
+    # getMomentum(games, fnames, 1)
+    ''' reset functions '''
+    # recalculatePasses(games, fnames)
+
+    ''' calculate '''
+    # _ = print_to_terminal.rankAnalyticsCustom(games)
+
+    ''' plotting for paper '''
+    # paper_plots.makeZoP()
+    # paper_plots.PAvHist(games)
+    paper_plots.makePAvPlots(games)
+    # paper_plots.passPressureLaneScatter(games)
+    # paper_plots.plot2D(games)
+    # paper_plots.plotPassChart(games)
+    # paper_plots.plotPressureChart(games)
+    # paper_plots.plotMomentumLoad(fname='../../2019030415/', game=game)
+
+    ''' play game temporally '''
+    # playGame(fname='../../2019030415/', game=game)
